@@ -725,7 +725,11 @@ void UnifiedCache::AccessCount(
 
 void UnifiedCache::FeatCacheLookup(int32_t* sampled_ids, int32_t* cache_index,
                                     int32_t* node_counter, float* dst_float_buffer,
-                                    int32_t op_id, int32_t dev_id, cudaStream_t strm_hdl){
+                                    int32_t op_id, int32_t dev_id, cudaStream_t strm_hdl
+#ifdef MONITOR
+                                    , ull *dev_ctr = nullptr, ull *dev_hits = nullptr
+#endif
+                                    ){
     dim3 block_num(32, 1);
 	dim3 thread_num(1024, 1);
     float** gpu_float_feature     = Global_Float_Feature_Cache(dev_id);
@@ -744,5 +748,8 @@ void UnifiedCache::FeatCacheLookup(int32_t* sampled_ids, int32_t* cache_index,
         node_counter, dst_float_buffer,
         total_num_nodes_,
         dev_id, op_id
+#ifdef MONITOR
+        , dev_ctr, dev_hits
+#endif
     );
 }

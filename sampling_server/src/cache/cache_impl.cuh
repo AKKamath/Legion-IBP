@@ -242,33 +242,60 @@ __global__ void multiGPU_feat_cache_lookup(
 	int32_t* node_counter, float* dst_float_buffer,
 	int32_t total_num_nodes,
 	int32_t dev_id,
-	int32_t op_id)
+	int32_t op_id
+#ifdef MONITOR
+    , unsigned long long *dev_ctr = nullptr, unsigned long long *dev_hits = nullptr
+#endif
+    )
 {
     int32_t node_off = 0;
 	int32_t batch_size = 0;
-
+#ifdef MONITOR
+    __shared__ unsigned long long int ctr;
+    __shared__ unsigned long long int hits;
+#endif
     node_off   = node_counter[(op_id % INTRABATCH_CON) * 2];
     batch_size = node_counter[(op_id % INTRABATCH_CON) * 2 + 1];
 	int32_t gidx;//global cache index
 	int32_t fidx;//local cache index
 	int32_t didx;//device index
 	int32_t foffset;
+#ifdef MONITOR
+    if(threadIdx.x == 0) {
+        ctr = 0;
+        hits = 0;
+    }
+    __syncthreads();
+#endif
 	if(float_feature_len > 0){
 		for(int64_t thread_idx = threadIdx.x + blockDim.x * blockIdx.x; thread_idx < (int64_t(batch_size) * float_feature_len); thread_idx += blockDim.x * gridDim.x){
 			gidx = (cache_index[thread_idx / float_feature_len]);
 			didx = gidx / cache_capacity;//device idx in clique
 			fidx = gidx % cache_capacity;
 			foffset = thread_idx % float_feature_len;
+#ifdef MONITOR
+            atomicAdd(&ctr, 1);
+#endif
 			if(gidx < 0){/*cache miss*/
 				fidx = sampled_ids[node_off + (thread_idx / float_feature_len)];
 				if(fidx >= 0){
 					dst_float_buffer[int64_t(int64_t((int64_t(node_off) * float_feature_len)) + thread_idx)] = cpu_float_features[int64_t(int64_t(int64_t(fidx%total_num_nodes) * float_feature_len) + foffset)];
+#ifdef MONITOR
+                    atomicAdd(&hits, 1);
+#endif
 				}
 			}else{/*cache hit, find global position*/
 				dst_float_buffer[int64_t(int64_t((int64_t(node_off) * float_feature_len)) + thread_idx)] = gpu_float_feature[didx][int64_t(int64_t(int64_t(fidx) * float_feature_len) + foffset)];
 			}
 		}
 	}
+#ifdef MONITOR
+    __syncthreads();
+    if(threadIdx.x == 0 && dev_ctr != nullptr && dev_hits != nullptr) {
+        atomicAdd(dev_ctr, ctr);
+        atomicAdd(dev_hits, hits);
+    }
+#endif
 }
 
 

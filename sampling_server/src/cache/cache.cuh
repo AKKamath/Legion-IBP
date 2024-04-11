@@ -6,6 +6,7 @@
 
 #include <iostream>
 #include <vector>
+#define ull unsigned long long
 
 class CacheController{
 public:
@@ -128,7 +129,11 @@ public:
     
     void FeatCacheLookup(int32_t* sampled_ids, int32_t* cache_index,
                          int32_t* node_counter, float* dst_float_buffer,
-                         int32_t op_id, int32_t dev_id, cudaStream_t strm_hdl);
+                         int32_t op_id, int32_t dev_id, cudaStream_t strm_hdl
+#ifdef MONITOR
+                         , ull *dev_ctr, ull *dev_hits
+#endif
+                         );
 
 private:    
     int32_t NodeCapacity(int32_t dev_id);

@@ -42,6 +42,11 @@ void FeatureCacheLookup(
   MemoryPool*     memorypool,
   int32_t         op_id,
   int32_t         dev_id
+#ifdef MONITOR
+  ,
+  ull*            dev_ctr,
+  ull*            dev_hits
+#endif
 );
 
 extern "C"

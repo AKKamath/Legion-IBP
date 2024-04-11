@@ -13,8 +13,11 @@
 #include <thread>
 #include <functional>
 #include <chrono>
-
-
+#ifdef MONITOR
+    #define TIMESTAMP std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
+    #define TIME_NOW std::chrono::steady_clock::now()
+    #define TIME_DIFF(start, end) std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()
+#endif
 // Macro for checking cuda errors following a cuda launch or api call
 #define cudaCheckError()                                       \
   {                                                            \
@@ -176,6 +179,14 @@ public:
         GraphStorage* graph     = (GraphStorage*)(params->graph);
         FeatureStorage* feature   = (FeatureStorage*)(params->feature);
         IPCEnv* env             = (IPCEnv*)(params->env);
+#ifdef MONITOR
+        batches = 0;
+        sampler_time = 0;
+        cudaMalloc(&dev_ctr, sizeof(ull));
+        cudaMalloc(&dev_hits, sizeof(ull));
+        cudaMemset(dev_ctr, 0, sizeof(ull));
+        cudaMemset(dev_hits, 0, sizeof(ull));
+#endif
 
         /*initialize GPU environment*/
         streams_.resize(INTRABATCH_CON);
@@ -249,6 +260,10 @@ public:
         
         events_.resize(op_num_);
         op_params_.resize(op_num_);
+#ifdef MONITOR
+        op_time.resize(op_num_);
+        events_start_.resize(op_num_);
+#endif
 
         bool in_memory = params->in_memory;
 
@@ -265,6 +280,11 @@ public:
             op_params_[i]->env          = env;
             op_params_[i]->in_memory    = in_memory;
             op_params_[i]->hop_num      = hop_num;
+#ifdef MONITOR
+            op_params_[i]->dev_ctr      = dev_ctr;
+            op_params_[i]->dev_hits     = dev_hits;
+            cudaEventCreate(&events_start_[i]);
+#endif
         }
 
         for(int i = 0; i < hop_num; i++){
@@ -307,13 +327,22 @@ public:
         memorypool_->SetCurrentMode(mode_);
         memorypool_->SetIter(env->GetLocalBatchId(batch_id));
         env->IPCWait(local_dev_id_, current_pipe_);
-        
+#ifdef MONITOR
+        auto start_time = TIME_NOW;
+		printf("Timestamp %lu, sample %d, worker %d, system %s, %s\n", TIMESTAMP, batch_id, local_dev_id_, "sampler", "start");
+#endif
         for(int i = 0; i < op_num_; i++){
             if(i % INTRABATCH_CON >= 1){
-                cudaStreamWaitEvent(streams_[0], events_[i / INTRABATCH_CON * INTRABATCH_CON], 0);
+                cudaStreamWaitEvent(streams_[i % INTRABATCH_CON], events_[i / INTRABATCH_CON * INTRABATCH_CON], 0);
             }
+#ifdef MONITOR
+            cudaEventRecord(events_start_[i], op_params_[i]->stream);
+#endif
             op_params_[i]->is_presc = false;
             op_factory_[i]->run(op_params_[i]);
+#ifdef MONITOR
+            cudaEventSynchronize(events_[i]);
+#endif
         }
         
         bool is_ready = false;
@@ -322,10 +351,38 @@ public:
                 is_ready = true;
             }
         }
+#ifdef MONITOR
+        for(int i = 0; i < op_num_; ++i) {
+            float time = 0;
+            cudaEventElapsedTime(&time, events_start_[i], events_[i]);
+            op_time[i] += time;
+        }
 
+		printf("Timestamp %lu, sample %d, worker %d, system %s, %s\n", TIMESTAMP, batch_id, local_dev_id_, "sampler", "gensample");
+        auto end_time = TIME_NOW;
+        auto duration = TIME_DIFF(start_time, end_time);
+        sampler_time += duration;
+        ++batches;
+#endif
         env->IPCPost(local_dev_id_, current_pipe_);
         if(batch_id % 1000 == 0 && local_dev_id_ == 0){
+#ifdef MONITOR
+            ull host_ctr, host_hits;
+            cudaMemcpy(&host_ctr, dev_ctr, sizeof(ull), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&host_hits, dev_hits, sizeof(ull), cudaMemcpyDeviceToHost);
+            cudaMemset(dev_ctr, 0, sizeof(ull));
+            cudaMemset(dev_hits, 0, sizeof(ull));
+            std::cout<<"batch id: "<<batch_id<< "; " << batches << " batches, time per sample: " << sampler_time / batches << " us\n";
+            std::cout<<"Miss rate: "<< (float)host_hits * 100 / (float)host_ctr << "%\n";
+            for(int i = 0; i < op_num_; i++){
+                std::cout<<i<<" time: "<< op_time[i] / batches <<" ms, ";
+                op_time[i] = 0;
+            }
+            std::cout<<"\n";
+            sampler_time = batches = 0;
+#else
             std::cout<<"batch id: "<<batch_id<<"\n";
+#endif
         }
         current_pipe_ = (current_pipe_ + 1) % interbatch_concurrency_;
         memorypool_ -> SetCurrentPipe(current_pipe_);
@@ -357,6 +414,13 @@ private:
     /*mode, training(0), validation(1), testing(2)*/
     int mode_;
     int op_num_;
+#ifdef MONITOR
+    int batches;
+    uint64_t sampler_time;
+    std::vector<float> op_time;
+    ull *dev_ctr, *dev_hits;
+    std::vector<cudaEvent_t> events_start_;
+#endif
     
     std::vector<cudaStream_t> streams_;
     std::vector<cudaEvent_t> events_;

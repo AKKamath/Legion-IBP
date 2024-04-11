@@ -504,7 +504,13 @@ void FeatureCacheLookup(
   UnifiedCache*   cache, 
   MemoryPool*     memorypool,
   int32_t         op_id,
-  int32_t         dev_id)
+  int32_t         dev_id
+#ifdef MONITOR
+  ,
+  ull*            dev_ctr,
+  ull*            dev_hits
+#endif
+  )
 {	
 	int32_t* sampled_ids 		= memorypool->GetSampledIds();
 	int32_t* cache_index 		= memorypool->GetCacheSearchBuffer();
@@ -514,7 +520,11 @@ void FeatureCacheLookup(
 
 	counter_update<<<1, 1, 0, (strm_hdl)>>>(node_counter, edge_counter, op_id, 0, 0);		
 	cudaCheckError();
-	cache->FeatCacheLookup(sampled_ids, cache_index, node_counter, dst_float_buffer, op_id, dev_id, strm_hdl);
+	cache->FeatCacheLookup(sampled_ids, cache_index, node_counter, dst_float_buffer, op_id, dev_id, strm_hdl
+#ifdef MONITOR
+		, dev_ctr, dev_hits
+#endif
+		);
 	cudaCheckError();
 }	
 

@@ -70,8 +70,15 @@ public:
         UnifiedCache* cache         = (UnifiedCache*)(params->cache);
         MemoryPool* memorypool      = (MemoryPool*)(params->memorypool);
         int32_t device_id           = params->device_id;
-
-        FeatureCacheLookup(params->stream, cache, memorypool, op_id_, device_id);
+#ifdef MONITOR
+        ull *dev_ctr                = (ull*)(params->dev_ctr);
+        ull *dev_hits               = (ull*)(params->dev_hits);
+#endif
+        FeatureCacheLookup(params->stream, cache, memorypool, op_id_, device_id
+#ifdef MONITOR
+            , dev_ctr, dev_hits
+#endif
+            );
         cudaEventRecord(((params->event)), ((params->stream)));
         cudaCheckError();
     }

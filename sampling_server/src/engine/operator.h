@@ -1,5 +1,6 @@
 #ifndef OPERATOR_H
 #define OPERATOR_H
+#define ull unsigned long long
 
 struct OpParams {
     int device_id;
@@ -14,6 +15,10 @@ struct OpParams {
     bool is_presc;
     bool in_memory;
     int  hop_num;
+#ifdef MONITOR
+    ull *dev_ctr;
+    ull *dev_hits;
+#endif
 };
 
 class Operator {
