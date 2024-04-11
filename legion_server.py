@@ -47,13 +47,13 @@ def Run(args):
         valid_set_num = 39323
         test_set_num = 2213091
     elif args.dataset_name == "paper100m":
-        path = args.dataset_path + "/paper100M/"
+        path = args.dataset_path + "/paper100m/"
         vertices_num = 111059956
         edges_num = 1615685872
         features_dim = 128
-        train_set_num = 11105995
-        valid_set_num = 100000
-        test_set_num = 100000
+        train_set_num = 1207179  
+        valid_set_num = 125265
+        test_set_num = 214338
     elif args.dataset_name == "com-friendster":
         path = args.dataset_path + "/com-friendster/"
         vertices_num = 65608366
@@ -107,7 +107,14 @@ def Run(args):
     else:
         cache_agg_mode = 0
 
-    os.system("./sampling_server/build/bin/sampling_server {} {}".format(gpu_number, cache_agg_mode))
+    # get the current file path
+    current_file_path = os.path.abspath(__file__)
+
+    # get the Legion_home path
+    Legion_home = os.path.dirname(current_file_path)
+
+    server_path = os.path.join(Legion_home, "sampling_server/build/bin/sampling_server {} {}").format(gpu_number, cache_agg_mode)
+    os.system(server_path)
     ## TODO, integrate Legion server in python module
 
 

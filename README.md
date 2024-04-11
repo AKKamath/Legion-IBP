@@ -46,17 +46,23 @@ $ pip3 install  dgl -f https://data.dgl.ai/wheels/cu1xx/repo.html
 Datasets are from OGB (https://ogb.stanford.edu/), Standford-snap (https://snap.stanford.edu/), and Webgraph (https://webgraph.di.unimi.it/).
 Here is an example of preparing datasets for Legion.
 
-### Uk-Union Datasets
-Refer to README in dataset directory for more instructions
+### Paper100m dataset
+Refer to README in dataset directory for customizing webgraphs
 ```
-$ bash prepare_datasets.sh
+$ bash prepare_dataset_eva.sh
 ```
 
-### Partition Uk-Union
+### Products dataset
+Refer to README in dataset directory for customizing webgraphs
+```
+$ bash prepare_dataset_eva_products.sh
+```
+
+### Partition paper100m
 gpu_num represents all gpu numbers you want to use, Legion will partition the graph according to underlying NVlink topology
 Note that this step would consume a large volume of CPU memory.
 ```
-$ python graph_partitioning.py --dataset_name 'ukunion' --gpu_num 2
+$ python graph_partitioning.py --dataset_name 'paper100m' --gpu_num 2
 ```
 
 ## 4. Build Legion from Source
@@ -65,24 +71,38 @@ $ python graph_partitioning.py --dataset_name 'ukunion' --gpu_num 2
 $ bash build.sh
 ```
 
-## 4. Run Legion
+## 5. Run Legion, Start from training Graphsage on paper100m
 There are three steps to train a GNN model in Legion. In these steps, you need to change to **root** user for PCM. (2024.3.11, to solve PCM bugs for general platforms, I disable PCM for now)
 ### Step 1. Open msr by root for PCM
 ```
 $ modprobe msr
 ```
 ### Step 2. Start Legion Server
-
+**Paper100M**
 ```
-$ python legion_server.py --dataset_path 'dataset' --dataset_name ukunion --train_batch_size 8000 --fanout [25,10] --gpu_number 2 --epoch 2 --cache_memory 38000000 
+$ python legion_server.py --dataset_path 'dataset' --dataset_name paper100m --train_batch_size 8000 --fanout [25,10] --gpu_number 2 --epoch 2 --cache_memory 38000000 
+```
+
+**Products**
+```
+python legion_server.py --dataset_path 'dataset' --dataset_name products --train_batch_size 800 --fanout [25,10] --gpu_number 1 --epoch 2 --cache_memory 38000000
 ```
 
 ### Step 3. Run Legion Training
 After Legion outputs "System is ready for serving", then start training by: 
+**Paper100M**
 ```
-$ python training_backend/legion_graphsage.py --class_num 2  --features_num 128 --hidden_dim 256 --hops_num 2 --gpu_number 2 --epoch 2
+$ python training_backend/legion_graphsage.py --class_num 172  --features_num 128 --hidden_dim 256 --hops_num 2 --gpu_number 2 --epoch 2
 ```
-I will continusly work on this to improve the running process for easier use.
+The training backend will output like this:
+
+<img width="464" alt="100a4006d37d398d2db7ece4edaae97" src="https://github.com/RC4ML/Legion/assets/109936863/1ae401ef-297f-4c88-864a-fe7f8496d973">
+
+**Products**
+```
+python training_backend/legion_graphsage.py --class_num 47  --features_num 100 --hidden_dim 128 --hops_num 2 --gpu_number 1 --epoch 2
+```
+I will continuously work on this to improve the running process for easier use.
 
 ## Cite this work
 If you use it in your paper, please cite our work

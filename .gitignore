@@ -3,7 +3,10 @@ dataset/lib
 dataset/xtrapulp
 dataset/xtrapulp_result
 dataset/gen_legion_xtrapulp_fomat
+dataset/dataset
+dataset/paper100m
 sampling_server/build
 training_backend/build
 training_backend/dist
 training_backend/ipcservice.egg-info
+dataset/products
