@@ -3,7 +3,7 @@ import numpy as np
 from scipy.sparse import coo_matrix
 
 # root = '/home/wzq/datasets/OGB' can be replaced to the path where you store the dataset
-dataset = NodePropPredDataset(name = 'ogbn-products',root='/home/wzq/datasets/OGB')
+dataset = NodePropPredDataset(name = 'ogbn-products')
 
 split_idx = dataset.get_idx_split()
 train_idx, valid_idx, test_idx = split_idx["train"], split_idx["valid"], split_idx["test"]
