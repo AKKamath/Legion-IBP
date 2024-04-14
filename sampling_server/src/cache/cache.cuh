@@ -3,6 +3,7 @@
 
 #include "graph_storage.cuh"
 #include "feature_storage.cuh"
+#include "../dyn_cache/dyn_cache.cuh"
 
 #include <iostream>
 #include <vector>
@@ -48,8 +49,6 @@ public:
 
     virtual void Insert(int32_t* QT, int32_t* QF, int32_t cache_expand, int32_t Kg) = 0;
     
-    virtual void HybridInsert(int32_t* QF, int32_t cpu_cache_capacity, int32_t gpu_cache_capacity) = 0; 
-    
     virtual void AccessCount(
         int32_t* d_key, 
         int32_t num_keys, 
@@ -72,7 +71,8 @@ public:
         int32_t train_step, 
         int32_t device_count,    
         int32_t cpu_cache_capacity,
-        int32_t gpu_cache_capacity);
+        int32_t gpu_cache_capacity,
+        int     dyn_cache = 0);
     
     void InitializeCacheController(
         int32_t dev_id, 
@@ -121,8 +121,6 @@ public:
 
     void FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStorage* graph);
     
-    void HybridInit(FeatureStorage* feature, GraphStorage* graph);
-    
     int32_t MaxIdNum(int32_t dev_id);
 
     unsigned long long int* GetEdgeAccessedMap(int32_t dev_id);
@@ -151,6 +149,7 @@ private:
     int32_t device_count_;
 
     std::vector<CacheController*> cache_controller_;
+    std::vector<DynamicCache*> dyn_cache_accessor;
 
     std::vector<int32_t*> QF_;
     std::vector<int32_t*> QT_;
@@ -179,6 +178,7 @@ private:
     float*  cpu_float_features_;
 
     bool is_presc_;
+    int dyn_cache;
 };
 
 

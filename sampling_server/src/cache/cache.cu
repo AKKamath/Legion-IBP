@@ -1,5 +1,8 @@
 #include "cache.cuh"
 #include "cache_impl.cuh"
+#include <chrono>
+#define TIME_NOW std::chrono::steady_clock::now()
+#define TIME_DIFF(start, end) std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()
 
 class PreSCCacheController : public CacheController {
 public:
@@ -132,34 +135,6 @@ public:
         cudaDeviceSynchronize();
         cudaFree(index_pair);
         cudaFree(offset_pair);
-
-    }
-
-    void HybridInsert(int32_t* QF, int32_t cpu_cache_capacity, int32_t gpu_cache_capacity) override {//only feature now
-        cudaSetDevice(device_idx_);
-        cudaCheckError();
-
-        cudaMalloc(&pair_, int64_t(int64_t(cpu_cache_capacity + gpu_cache_capacity) * sizeof(pair_type)));
-        cudaCheckError();
-        dim3 block_num(80, 1);
-        dim3 thread_num(1024, 1);
-        cudaStream_t stream;
-        cudaStreamCreate(&stream);
-        HybridInitPair<<<block_num, thread_num>>>(pair_, QF, cpu_cache_capacity, gpu_cache_capacity);
-        cudaCheckError();
-        node_map_->insert(pair_, (pair_ + (cpu_cache_capacity + gpu_cache_capacity)), stream);
-        cudaCheckError();
-        // if(success){
-        //     std::cout<<"Feature Cache Successfully Initialized\n";
-        // }
-        cudaDeviceSynchronize();
-        cudaCheckError();
-        cudaFree(pair_);
-        cudaCheckError();
-        // cudaFree(cache_ids_);
-        // cudaCheckError();
-        // cudaFree(cache_offset_);
-        // cudaCheckError();
 
     }
 
@@ -298,8 +273,10 @@ void UnifiedCache::Initialize(
     int32_t train_step, 
     int32_t device_count,
     int32_t cpu_cache_capacity,
-    int32_t gpu_cache_capacity)
+    int32_t gpu_cache_capacity,
+    int     dyn_cache)
 {
+    this->dyn_cache = dyn_cache;
     device_count_ = device_count;
     cache_controller_.resize(device_count_);
     for(int32_t i = 0; i < device_count_; i++){
@@ -474,6 +451,8 @@ void UnifiedCache::CostModel(int cache_agg_mode, FeatureStorage* feature, GraphS
         uint64_t* h_edge_prefix = (uint64_t*)malloc(int64_t(int64_t(total_num_nodes)*sizeof(uint64_t)));
         cudaMemcpy(h_node_prefix, d_node_prefix, int64_t(int64_t(total_num_nodes)*sizeof(uint64_t)), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_edge_prefix, d_edge_prefix, int64_t(int64_t(total_num_nodes)*sizeof(uint64_t)), cudaMemcpyDeviceToHost);
+        cudaFree(d_node_prefix);
+        cudaFree(d_edge_prefix);
         // std::cout<<"total node hotness "<<h_node_prefix[total_num_nodes - 1]<<" "<<h_node_prefix[0]<<" "<<h_node_prefix[1]<<std::endl;
         // std::cout<<"total edge hotness "<<h_edge_prefix[total_num_nodes - 1]<<std::endl;
            
@@ -568,105 +547,69 @@ void UnifiedCache::FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStor
             cache_controller_[i * Kg_ + j]->Insert(QT_[i], QF_[i], cache_expand, Kg_);
         }
     }
-    
-    d_float_feature_cache_ptr_.resize(device_count_);
-
-    for(int32_t i = 0; i < device_count_; i++){
-        cudaSetDevice(i);
-        float** new_ptr;
-        cudaMalloc(&new_ptr, device_count_ * sizeof(float*));
-        d_float_feature_cache_ptr_[i] = new_ptr;
-    }
 
     float* cpu_float_feature = feature->GetAllFloatFeature();
     cpu_float_features_ = cpu_float_feature;
-    
-    for(int32_t i = 0; i < Kc_; i++){
-        for(int32_t j = 0; j < Kg_; j++){
-            int32_t dev_id = i * Kg_ + j;
-            if(float_feature_len_ > 0){
-                cudaSetDevice(dev_id);
-                float* new_float_feature_cache;
-                cudaMalloc(&new_float_feature_cache, int64_t(int64_t(int64_t(node_capacity_[i]) * float_feature_len_) * sizeof(float)));
-                
-                FeatFillUp<<<128, 1024>>>(node_capacity_[i], float_feature_len_, new_float_feature_cache, cpu_float_feature, QF_[i], Kg_, j);
-                float_feature_cache_[j] = new_float_feature_cache;
-                init_feature_cache<<<1,1>>>(d_float_feature_cache_ptr_[i * Kg_], new_float_feature_cache, j);//j: device id in clique
+    // Start timer for time taken to fill the cache
+    auto cache_fill_start = TIME_NOW;
+    if(!dyn_cache) {
+        d_float_feature_cache_ptr_.resize(device_count_);
+
+        for(int32_t i = 0; i < device_count_; i++){
+            cudaSetDevice(i);
+            float** new_ptr;
+            cudaMalloc(&new_ptr, device_count_ * sizeof(float*));
+            d_float_feature_cache_ptr_[i] = new_ptr;
+        }
+
+        for(int32_t i = 0; i < Kc_; i++){
+            for(int32_t j = 0; j < Kg_; j++){
+                int32_t dev_id = i * Kg_ + j;
+                if(float_feature_len_ > 0){
+                    cudaSetDevice(dev_id);
+                    float* new_float_feature_cache;
+                    cudaMalloc(&new_float_feature_cache, int64_t(int64_t(int64_t(node_capacity_[i]) * float_feature_len_) * sizeof(float)));
+                    
+                    FeatFillUp<<<128, 1024>>>(node_capacity_[i], float_feature_len_, new_float_feature_cache, cpu_float_feature, QF_[i], Kg_, j);
+                    float_feature_cache_[j] = new_float_feature_cache;
+                    init_feature_cache<<<1,1>>>(d_float_feature_cache_ptr_[i * Kg_], new_float_feature_cache, j);//j: device id in clique
+                    cudaCheckError();
+                }
+            }
+            for(int32_t j = 1; j < Kg_; j++){
+                cudaMemcpy(d_float_feature_cache_ptr_[i * Kg_ + j], d_float_feature_cache_ptr_[i * Kg_], device_count_ * sizeof(float**), cudaMemcpyDeviceToDevice);
                 cudaCheckError();
             }
         }
-        for(int32_t j = 1; j < Kg_; j++){
-            cudaMemcpy(d_float_feature_cache_ptr_[i * Kg_ + j], d_float_feature_cache_ptr_[i * Kg_], device_count_ * sizeof(float**), cudaMemcpyDeviceToDevice);
-            cudaCheckError();
+    } else {
+        std::cout << "Using dynamic cache\n";
+        dyn_cache_accessor.resize(Kc_);
+        for(int32_t i = 0; i < Kc_; i++){
+            dyn_cache_accessor[i] = new DynamicCache();
+            dyn_cache_accessor[i]->init_cache(node_capacity_[i], float_feature_len_, 
+                cpu_float_feature, QF_[i], Kg_, i * Kg_, feature->TotalNodeNum());
         }
     }
     cudaDeviceSynchronize();
-    // std::cout<<"Finish load feature cache\n";
+    auto cache_fill_end = TIME_NOW;
+    std::cout<<"Finish load feature cache, took " << (float)TIME_DIFF(cache_fill_start, cache_fill_end) / 1000 << " ms\n";
+    fflush(stdout);
 
     for(int32_t i = 0; i < Kc_; i++){
         graph->GraphCache(QT_[i], i, Kg_, edge_capacity_[i]);
     }
     cudaDeviceSynchronize();
-    // std::cout<<"Finish load topology cache\n";
-}
-
-
-void UnifiedCache::HybridInit(FeatureStorage* feature, GraphStorage* graph){//multi-gpu 
-    cudaSetDevice(0);
-    cudaHostAlloc(&cpu_float_features_, int64_t(int64_t(cpu_cache_capacity_) * float_feature_len_ * sizeof(float)), cudaHostAllocMapped);
-
-    // std::cout<<"Start selecting cache candidates\n";
-    std::vector<unsigned long long int*> node_access_time;
-    for(int32_t i = 0; i < device_count_; i++){
-        node_access_time.push_back(cache_controller_[i]->GetNodeAccessedMap());
-    }
-    cudaCheckError();
-    int32_t total_num_nodes = feature->TotalNodeNum();
-    total_num_nodes_ = total_num_nodes;
-    for(int32_t i = 0; i < device_count_; i++){
-        cudaSetDevice(i);
-        int32_t* node_cache_order;
-        cudaMalloc(&node_cache_order, int64_t(int64_t(total_num_nodes) * sizeof(int32_t)));
-        cudaCheckError();
-        init_cache_order<<<80, 1024>>>(node_cache_order, total_num_nodes);
-        thrust::sort_by_key(thrust::device, node_access_time[i], node_access_time[i] + total_num_nodes, node_cache_order, thrust::greater<unsigned long long int>());
-        cudaCheckError();
-        QF_.push_back(node_cache_order);
-    }
-    for(int32_t i = 0; i < device_count_; i++){
-        cudaSetDevice(i);
-        cache_controller_[i]->InitializeMap(gpu_cache_capacity_ + cpu_cache_capacity_, 100);//edge cache disabled now
-        cache_controller_[i]->HybridInsert(QF_[i], cpu_cache_capacity_, gpu_cache_capacity_);
-    }
-
-    d_float_feature_cache_ptr_.resize(device_count_);
-
-    for(int32_t i = 0; i < device_count_; i++){
-        cudaSetDevice(i);
-        float** new_ptr;
-        cudaMalloc(&new_ptr, device_count_ * sizeof(float*));
-        d_float_feature_cache_ptr_[i] = new_ptr;
-    }
-
-    if(float_feature_len_ > 0){
-        for(int32_t i = 0; i < device_count_; i++){
-            cudaSetDevice(i);
-            float* new_float_feature_cache;
-            cudaMalloc(&new_float_feature_cache, int64_t(int64_t(int64_t(gpu_cache_capacity_) * float_feature_len_) * sizeof(float)));
-            // FeatFillUp<<<128, 1024>>>(gpu_cache_capacity_, float_feature_len_, new_float_feature_cache, cpu_float_feature, QF_[i], Kg_, j);
-            float_feature_cache_[i] = new_float_feature_cache;
-            init_feature_cache<<<1,1>>>(d_float_feature_cache_ptr_[0], new_float_feature_cache, i);
-            cudaCheckError();
-        }
-        for(int32_t i = 0; i < device_count_; i++){
-            cudaMemcpy(d_float_feature_cache_ptr_[i], d_float_feature_cache_ptr_[0], device_count_ * sizeof(float*), cudaMemcpyDeviceToDevice);
+    for(int32_t i = 0; i < Kc_; i++){
+        for(int32_t j = 0; j < Kg_; j++){
+            int32_t dev_id = i * Kg_ + j;
+            cudaSetDevice(dev_id);
+            size_t free, total;
+            cudaMemGetInfo( &free, &total );
+            std::cout << "GPU " << dev_id << " memory: free=" << free << ", total=" << total << std::endl;
         }
     }
-
-    cudaDeviceSynchronize();
-    is_presc_ = false;
-
-    std::cout<<"Finish initializing cache\n";
+    std::cout<<"Finish load topology cache\n";
+    abort();
 }
 
 int32_t UnifiedCache::NodeCapacity(int32_t dev_id){

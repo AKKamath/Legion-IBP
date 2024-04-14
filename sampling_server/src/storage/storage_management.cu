@@ -231,7 +231,7 @@ void StorageManagement::LoadFeature(BuildInfo* info){
     info->total_num_nodes = node_num_;
 }
 
-void StorageManagement::Initialze(int32_t partition_count, int32_t in_memory_mode){
+void StorageManagement::Initialze(int32_t partition_count, int32_t in_memory_mode, int dyn_cache){
 
     in_memory_mode_ = in_memory_mode;
 
@@ -263,7 +263,7 @@ void StorageManagement::Initialze(int32_t partition_count, int32_t in_memory_mod
     int32_t train_step = env_->GetTrainStep();
 
     cudaSetDevice(0);
-    cache_ -> Initialize(cache_memory_, float_feature_len_, train_step, partition_count, cpu_cache_capacity_, gpu_cache_capacity_);
+    cache_ -> Initialize(cache_memory_, float_feature_len_, train_step, partition_count, cpu_cache_capacity_, gpu_cache_capacity_, dyn_cache);
     cudaSetDevice(0);
     std::cout<<"Storage Initialized\n";
 }

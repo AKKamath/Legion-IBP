@@ -7,7 +7,7 @@
 class StorageManagement {
 public:
   
-  void Initialze(int32_t partition_count, int32_t in_memory_mode);
+  void Initialze(int32_t partition_count, int32_t in_memory_mode, int dyn_cache = false);
 
   GraphStorage* GetGraph();
 

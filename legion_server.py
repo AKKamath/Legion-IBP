@@ -113,7 +113,7 @@ def Run(args):
     # get the Legion_home path
     Legion_home = os.path.dirname(current_file_path)
 
-    server_path = os.path.join(Legion_home, "sampling_server/build/bin/sampling_server {} {}").format(gpu_number, cache_agg_mode)
+    server_path = os.path.join(Legion_home, "sampling_server/build/bin/sampling_server {} {} {}").format(gpu_number, cache_agg_mode, args.dyn_cache)
     os.system(server_path)
     ## TODO, integrate Legion server in python module
 
@@ -129,6 +129,7 @@ if __name__ == "__main__":
     argparser.add_argument('--epoch', type=int, default=2)
     argparser.add_argument('--cache_memory', type=int, default=38000000)
     argparser.add_argument('--usenvlink', type=int, default=1)
+    argparser.add_argument('--dyn_cache', type=int, default=0)
     args = argparser.parse_args()
 
     Run(args)

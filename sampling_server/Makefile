@@ -18,7 +18,7 @@ clean:
 ################################## compiler #######################################
 
 NVCXX := nvcc
-NVCXXFLAGS := -std=c++17 -arch=sm_60 -Xcompiler -Wall \
+NVCXXFLAGS := -std=c++17 -arch=sm_70 -Xcompiler -Wall \
 			  --extended-lambda \
 			  -Xcompiler -fPIC -lpthread \
 			  --expt-relaxed-constexpr \
@@ -86,6 +86,10 @@ $(CORE_BUILT_DIR)/src/storage/%.o:$(CORE_DIR)/storage/%.cu $(CORE_H) $(CORE_CUH)
 
 $(CORE_BUILT_DIR)/src/engine/%.o:$(CORE_DIR)/engine/%.cu $(CORE_H) $(CORE_CUH)
 	@mkdir -p $(CORE_BUILT_DIR)/src/engine
+	$(NVCXX) $(NVCXXFLAGS) -c $< -o $@ -lrt
+
+$(CORE_BUILT_DIR)/src/dyn_cache/%.o:$(CORE_DIR)/dyn_cache/%.cu $(CORE_H) $(CORE_CUH)
+	@mkdir -p $(CORE_BUILT_DIR)/src/dyn_cache
 	$(NVCXX) $(NVCXXFLAGS) -c $< -o $@ -lrt
 
 core: $(CORE_OBJ)

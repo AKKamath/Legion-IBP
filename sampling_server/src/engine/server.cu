@@ -46,7 +46,8 @@ void RunnerLoop(int max_step, Runner* runner, RunnerParams* params){
 
 class GPUServer : public Server {
 public:
-    void Initialize(int global_shard_count, std::vector<int> fanout, int in_memory_mode) {
+    void Initialize(int global_shard_count, std::vector<int> fanout, int in_memory_mode, int dyn_cache) {
+        this->dyn_cache = dyn_cache;
         shard_count_ = global_shard_count;
         // std::cout<<"CUDA Device Count: "<<shard_count_<<"\n";
         if (in_memory_mode){
@@ -58,7 +59,7 @@ public:
         // monitor_->Init();
         
         StorageManagement* storage_management = new StorageManagement();
-        storage_management->Initialze(shard_count_, in_memory_mode);
+        storage_management->Initialze(shard_count_, in_memory_mode, dyn_cache);
         graph_              = storage_management->GetGraph();
         feature_            = storage_management->GetFeature();
         cache_              = storage_management->GetCache();
@@ -83,6 +84,7 @@ public:
             new_params->env             = (void*)ipc_env_;
             new_params->global_batch_id = 0;
             new_params->in_memory       = 1;
+            new_params->dyn_cache       = dyn_cache;
             params_[i]                  = new_params;
             Runner* new_runner          = NewGPURunner();
             runners_[i]                 = new_runner;
@@ -164,6 +166,7 @@ private:
     std::vector<std::thread> train_thread_pool_;
     std::vector<Runner*> runners_;
     std::vector<RunnerParams*> params_;
+    int dyn_cache;
 };
 
 Server* NewGPUServer(){

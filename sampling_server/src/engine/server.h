@@ -11,11 +11,12 @@ struct RunnerParams {
     void* env;
     int global_batch_id;
     bool in_memory;
+    int dyn_cache;
 };
 
 class Server {
 public:
-    virtual void Initialize(int global_shard_count, std::vector<int> fanout, int in_memory_mode) = 0;
+    virtual void Initialize(int global_shard_count, std::vector<int> fanout, int in_memory_mode, int dyn_cache) = 0;
     virtual void PreSc(int cache_agg_mode) = 0;
     virtual void Run() = 0;
     virtual void Finalize() = 0;
