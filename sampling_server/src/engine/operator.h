@@ -15,9 +15,11 @@ struct OpParams {
     bool is_presc;
     bool in_memory;
     int  hop_num;
-#ifdef MONITOR
+    int dyn_cache;
+#ifdef MONITOR_DEEP
     ull *dev_ctr;
     ull *dev_hits;
+    ull *inserts;
 #endif
 };
 

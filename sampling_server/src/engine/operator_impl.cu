@@ -100,7 +100,8 @@ void BatchGenerate(
 	int32_t         dev_id,
 	int32_t         mode,
 	bool 			is_presc,
-	int32_t 		hop_num)
+	int32_t 		hop_num,
+	int 			dyn_cache)
 {
 	int32_t* all_ids 	= nullptr;
 	int32_t* all_labels = nullptr;
@@ -164,7 +165,7 @@ void BatchGenerate(
 
 	counter_update<<<1, 1, 0, (strm_hdl)>>>(node_counter, edge_counter, 0, size, hop_num);
 	cudaCheckError();
-	if(!is_presc){
+	if(!is_presc && !dyn_cache){
 		cache->FindFeat(sampled_ids, cache_index, node_counter, op_id, strm_hdl, dev_id);
 		cudaCheckError();
 	}
@@ -406,7 +407,8 @@ void RandomSample(
   int32_t         count,
   int32_t         dev_id,
   int32_t         op_id,
-  bool            is_presc) 
+  bool            is_presc,
+  int 			  dyn_cache) 
 {		
 
 	if(graph == nullptr){
@@ -491,7 +493,7 @@ void RandomSample(
 	counter_update<<<1, 1, 0, (strm_hdl)>>>(node_counter, edge_counter, op_id, 0, 0);		
 	cudaCheckError();	
 
-	if(!is_presc){
+	if(!is_presc && !dyn_cache){
 		cache->FindFeat(sampled_ids, cache_index, node_counter, op_id, strm_hdl, dev_id);
 		cudaCheckError();
 	}
@@ -504,11 +506,13 @@ void FeatureCacheLookup(
   UnifiedCache*   cache, 
   MemoryPool*     memorypool,
   int32_t         op_id,
-  int32_t         dev_id
-#ifdef MONITOR
+  int32_t         dev_id,
+  int 			  dyn_cache
+#ifdef MONITOR_DEEP
   ,
   ull*            dev_ctr,
-  ull*            dev_hits
+  ull*            dev_hits,
+  ull*			  inserts
 #endif
   )
 {	
@@ -518,11 +522,11 @@ void FeatureCacheLookup(
 	int32_t* node_counter 		= memorypool->GetNodeCounter();
 	int32_t* edge_counter 		= memorypool->GetEdgeCounter();
 
-	counter_update<<<1, 1, 0, (strm_hdl)>>>(node_counter, edge_counter, op_id, 0, 0);		
+	counter_update<<<1, 1, 0, (strm_hdl)>>>(node_counter, edge_counter, op_id, 0, 0);
 	cudaCheckError();
 	cache->FeatCacheLookup(sampled_ids, cache_index, node_counter, dst_float_buffer, op_id, dev_id, strm_hdl
-#ifdef MONITOR
-		, dev_ctr, dev_hits
+#ifdef MONITOR_DEEP
+		, dev_ctr, dev_hits, inserts
 #endif
 		);
 	cudaCheckError();

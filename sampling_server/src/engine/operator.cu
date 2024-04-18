@@ -24,7 +24,7 @@ public:
         bool is_presc               = params->is_presc;
         int32_t hop_num             = params->hop_num;
 
-        BatchGenerate(params->stream, feature, cache, memorypool, batch_size, iter, device_id, device_id, mode, is_presc, hop_num);
+        BatchGenerate(params->stream, feature, cache, memorypool, batch_size, iter, device_id, device_id, mode, is_presc, hop_num, params->dyn_cache);
         cudaEventRecord(((params->event)), ((params->stream)));
         cudaCheckError();
     }
@@ -49,7 +49,7 @@ public:
         int32_t count               = params->neighbor_count;
         int32_t device_id           = params->device_id;
 
-        RandomSample(params->stream, graph, cache, memorypool, count, device_id, op_id_, is_presc);
+        RandomSample(params->stream, graph, cache, memorypool, count, device_id, op_id_, is_presc, params->dyn_cache);
         cudaEventRecord(((params->event)), ((params->stream)));
         cudaCheckError();
     }
@@ -70,13 +70,14 @@ public:
         UnifiedCache* cache         = (UnifiedCache*)(params->cache);
         MemoryPool* memorypool      = (MemoryPool*)(params->memorypool);
         int32_t device_id           = params->device_id;
-#ifdef MONITOR
+#ifdef MONITOR_DEEP
         ull *dev_ctr                = (ull*)(params->dev_ctr);
         ull *dev_hits               = (ull*)(params->dev_hits);
+        ull *inserts                = (ull*)(params->inserts);
 #endif
-        FeatureCacheLookup(params->stream, cache, memorypool, op_id_, device_id
-#ifdef MONITOR
-            , dev_ctr, dev_hits
+        FeatureCacheLookup(params->stream, cache, memorypool, op_id_, device_id, params->dyn_cache
+#ifdef MONITOR_DEEP
+            , dev_ctr, dev_hits, inserts
 #endif
             );
         cudaEventRecord(((params->event)), ((params->stream)));

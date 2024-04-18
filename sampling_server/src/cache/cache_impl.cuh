@@ -243,16 +243,16 @@ __global__ void multiGPU_feat_cache_lookup(
 	int32_t total_num_nodes,
 	int32_t dev_id,
 	int32_t op_id
-#ifdef MONITOR
-    , unsigned long long *dev_ctr = nullptr, unsigned long long *dev_hits = nullptr
+#ifdef MONITOR_DEEP
+    , unsigned long long *dev_ctr = nullptr, unsigned long long *dev_misses = nullptr
 #endif
     )
 {
     int32_t node_off = 0;
 	int32_t batch_size = 0;
-#ifdef MONITOR
+#ifdef MONITOR_DEEP
     __shared__ unsigned long long int ctr;
-    __shared__ unsigned long long int hits;
+    __shared__ unsigned long long int misses;
 #endif
     node_off   = node_counter[(op_id % INTRABATCH_CON) * 2];
     batch_size = node_counter[(op_id % INTRABATCH_CON) * 2 + 1];
@@ -260,10 +260,10 @@ __global__ void multiGPU_feat_cache_lookup(
 	int32_t fidx;//local cache index
 	int32_t didx;//device index
 	int32_t foffset;
-#ifdef MONITOR
+#ifdef MONITOR_DEEP
     if(threadIdx.x == 0) {
         ctr = 0;
-        hits = 0;
+        misses = 0;
     }
     __syncthreads();
 #endif
@@ -273,27 +273,30 @@ __global__ void multiGPU_feat_cache_lookup(
 			didx = gidx / cache_capacity;//device idx in clique
 			fidx = gidx % cache_capacity;
 			foffset = thread_idx % float_feature_len;
-#ifdef MONITOR
+#ifdef MONITOR_DEEP
             atomicAdd(&ctr, 1);
 #endif
 			if(gidx < 0){/*cache miss*/
 				fidx = sampled_ids[node_off + (thread_idx / float_feature_len)];
 				if(fidx >= 0){
 					dst_float_buffer[int64_t(int64_t((int64_t(node_off) * float_feature_len)) + thread_idx)] = cpu_float_features[int64_t(int64_t(int64_t(fidx%total_num_nodes) * float_feature_len) + foffset)];
-#ifdef MONITOR
-                    atomicAdd(&hits, 1);
-#endif
 				}
+#ifdef MONITOR_DEEP
+                else {
+                    printf("Weird miss: %d, %d\n", fidx, node_off + (thread_idx / float_feature_len));
+                }
+                atomicAdd(&misses, 1);
+#endif
 			}else{/*cache hit, find global position*/
 				dst_float_buffer[int64_t(int64_t((int64_t(node_off) * float_feature_len)) + thread_idx)] = gpu_float_feature[didx][int64_t(int64_t(int64_t(fidx) * float_feature_len) + foffset)];
 			}
 		}
 	}
-#ifdef MONITOR
+#ifdef MONITOR_DEEP
     __syncthreads();
-    if(threadIdx.x == 0 && dev_ctr != nullptr && dev_hits != nullptr) {
+    if(threadIdx.x == 0 && dev_ctr != nullptr && dev_misses != nullptr) {
         atomicAdd(dev_ctr, ctr);
-        atomicAdd(dev_hits, hits);
+        atomicAdd(dev_misses, misses);
     }
 #endif
 }

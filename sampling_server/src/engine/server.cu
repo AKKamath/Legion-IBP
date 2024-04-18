@@ -13,11 +13,10 @@
 #include <thread>
 #include <functional>
 #include <chrono>
-#ifdef MONITOR
-    #define TIMESTAMP std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
-    #define TIME_NOW std::chrono::steady_clock::now()
-    #define TIME_DIFF(start, end) std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()
-#endif
+#define TIMESTAMP std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
+#define TIME_NOW std::chrono::steady_clock::now()
+#define TIME_DIFF(start, end) std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()
+
 // Macro for checking cuda errors following a cuda launch or api call
 #define cudaCheckError()                                       \
   {                                                            \
@@ -180,15 +179,18 @@ public:
         local_dev_id_           = params->device_id;
         UnifiedCache* cache     = (UnifiedCache*)(params->cache);
         GraphStorage* graph     = (GraphStorage*)(params->graph);
-        FeatureStorage* feature   = (FeatureStorage*)(params->feature);
+        FeatureStorage* feature = (FeatureStorage*)(params->feature);
         IPCEnv* env             = (IPCEnv*)(params->env);
-#ifdef MONITOR
+        dyn_cache               = (int)(params->dyn_cache);
         batches = 0;
         sampler_time = 0;
+#ifdef MONITOR_DEEP
         cudaMalloc(&dev_ctr, sizeof(ull));
         cudaMalloc(&dev_hits, sizeof(ull));
+        cudaMalloc(&inserts, sizeof(ull));
         cudaMemset(dev_ctr, 0, sizeof(ull));
         cudaMemset(dev_hits, 0, sizeof(ull));
+        cudaMemset(inserts, 0, sizeof(ull));
 #endif
 
         /*initialize GPU environment*/
@@ -283,9 +285,13 @@ public:
             op_params_[i]->env          = env;
             op_params_[i]->in_memory    = in_memory;
             op_params_[i]->hop_num      = hop_num;
-#ifdef MONITOR
+            op_params_[i]->dyn_cache    = params->dyn_cache;
+#ifdef MONITOR_DEEP
             op_params_[i]->dev_ctr      = dev_ctr;
             op_params_[i]->dev_hits     = dev_hits;
+            op_params_[i]->inserts      = inserts;
+#endif
+#ifdef MONITOR
             cudaEventCreate(&events_start_[i]);
 #endif
         }
@@ -330,8 +336,8 @@ public:
         memorypool_->SetCurrentMode(mode_);
         memorypool_->SetIter(env->GetLocalBatchId(batch_id));
         env->IPCWait(local_dev_id_, current_pipe_);
-#ifdef MONITOR
         auto start_time = TIME_NOW;
+#ifdef MONITOR_TIMESTAMP
 		printf("Timestamp %lu, sample %d, worker %d, system %s, %s\n", TIMESTAMP, batch_id, local_dev_id_, "sampler", "start");
 #endif
         for(int i = 0; i < op_num_; i++){
@@ -360,32 +366,45 @@ public:
             cudaEventElapsedTime(&time, events_start_[i], events_[i]);
             op_time[i] += time;
         }
-
+#endif
+#ifdef MONITOR_TIMESTAMP
 		printf("Timestamp %lu, sample %d, worker %d, system %s, %s\n", TIMESTAMP, batch_id, local_dev_id_, "sampler", "gensample");
+#endif
         auto end_time = TIME_NOW;
         auto duration = TIME_DIFF(start_time, end_time);
         sampler_time += duration;
         ++batches;
-#endif
+
         env->IPCPost(local_dev_id_, current_pipe_);
-        if(batch_id % 1000 == 0 && local_dev_id_ == 0){
-#ifdef MONITOR
-            ull host_ctr, host_hits;
+        if(batch_id % 100 == 0 && local_dev_id_ == 0){
+            std::cout<<"batch id: "<<batch_id<< "; " << batches << " batches, time per sample: " << sampler_time / batches << " us\n";
+#ifdef MONITOR_DEEP
+            ull host_ctr, host_misses;
             cudaMemcpy(&host_ctr, dev_ctr, sizeof(ull), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&host_hits, dev_hits, sizeof(ull), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&host_misses, dev_hits, sizeof(ull), cudaMemcpyDeviceToHost);
             cudaMemset(dev_ctr, 0, sizeof(ull));
             cudaMemset(dev_hits, 0, sizeof(ull));
-            std::cout<<"batch id: "<<batch_id<< "; " << batches << " batches, time per sample: " << sampler_time / batches << " us\n";
-            std::cout<<"Miss rate: "<< (float)host_hits * 100 / (float)host_ctr << "%\n";
+            if(dyn_cache){
+                ull host_inserts;
+                cudaMemcpy(&host_inserts, inserts, sizeof(ull), cudaMemcpyDeviceToHost);
+                cudaMemset(inserts, 0, sizeof(ull));
+                std::cout << "Miss rate: "<< (float)host_misses * 100 / (float)host_ctr << "% (hits: " 
+                          << host_ctr - host_misses  << ", " << "inserts: " << host_inserts << ", "
+                          << "total: " << host_ctr << ")\n";
+            } else {
+                std::cout << "Miss rate: "<< (float)host_misses * 100 / (float)host_ctr << "% (hits: " 
+                          << (host_ctr - host_misses) / float_feature_len_ << ", "
+                          << "total: " << host_ctr / float_feature_len_ << ")\n";
+            }
+#endif
+#ifdef MONITOR
             for(int i = 0; i < op_num_; i++){
                 std::cout<<i<<" time: "<< op_time[i] / batches <<" ms, ";
                 op_time[i] = 0;
             }
             std::cout<<"\n";
-            sampler_time = batches = 0;
-#else
-            std::cout<<"batch id: "<<batch_id<<"\n";
 #endif
+            sampler_time = batches = 0;
         }
         current_pipe_ = (current_pipe_ + 1) % interbatch_concurrency_;
         memorypool_ -> SetCurrentPipe(current_pipe_);
@@ -417,12 +436,15 @@ private:
     /*mode, training(0), validation(1), testing(2)*/
     int mode_;
     int op_num_;
-#ifdef MONITOR
     int batches;
+    int dyn_cache;
     uint64_t sampler_time;
+#ifdef MONITOR
     std::vector<float> op_time;
-    ull *dev_ctr, *dev_hits;
     std::vector<cudaEvent_t> events_start_;
+#endif
+#ifdef MONITOR_DEEP
+    ull *dev_ctr, *dev_hits, *inserts;
 #endif
     
     std::vector<cudaStream_t> streams_;

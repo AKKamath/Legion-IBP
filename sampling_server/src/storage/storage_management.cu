@@ -236,6 +236,7 @@ void StorageManagement::Initialze(int32_t partition_count, int32_t in_memory_mod
     in_memory_mode_ = in_memory_mode;
 
     BuildInfo* info = new BuildInfo();
+    info->dyn_cache = dyn_cache;
 
     EnableP2PAccess();
     

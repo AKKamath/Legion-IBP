@@ -52,6 +52,7 @@ struct BuildInfo{
     uint64_t numElems;
     bool random;
     uint64_t ssdtype;
+    int dyn_cache;
 
     //csr
     // std::vector<std::vector<int64_t>> csr_node_index;

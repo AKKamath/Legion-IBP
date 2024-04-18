@@ -20,7 +20,8 @@ void BatchGenerate(
   int32_t         dev_id,
   int32_t         mode,
   bool            is_presc,
-  int32_t 		    hop_num
+  int32_t 		    hop_num,
+  int             dyn_cache
 );
 
 extern "C"											
@@ -32,7 +33,8 @@ void RandomSample(
   int32_t         count,
   int32_t         dev_id,
   int32_t         op_id,
-  bool            is_presc
+  bool            is_presc,
+  int             dyn_cache
 );
 
 extern "C"
@@ -41,11 +43,13 @@ void FeatureCacheLookup(
   UnifiedCache*   cache, 
   MemoryPool*     memorypool,
   int32_t         op_id,
-  int32_t         dev_id
-#ifdef MONITOR
+  int32_t         dev_id,
+  int             dyn_cache
+#ifdef MONITOR_DEEP
   ,
   ull*            dev_ctr,
-  ull*            dev_hits
+  ull*            dev_hits,
+  ull*            inserts
 #endif
 );
 

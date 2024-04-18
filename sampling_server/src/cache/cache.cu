@@ -547,6 +547,15 @@ void UnifiedCache::FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStor
             cache_controller_[i * Kg_ + j]->Insert(QT_[i], QF_[i], cache_expand, Kg_);
         }
     }
+    for(int32_t i = 0; i < Kc_; i++){
+        for(int32_t j = 0; j < Kg_; j++){
+            int32_t dev_id = i * Kg_ + j;
+            cudaSetDevice(dev_id);
+            size_t free, total;
+            cudaMemGetInfo( &free, &total );
+            std::cout << "GPU " << dev_id << " memory: free=" << free << ", total=" << total << std::endl;
+        }
+    }
 
     float* cpu_float_feature = feature->GetAllFloatFeature();
     cpu_float_features_ = cpu_float_feature;
@@ -609,7 +618,6 @@ void UnifiedCache::FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStor
         }
     }
     std::cout<<"Finish load topology cache\n";
-    abort();
 }
 
 int32_t UnifiedCache::NodeCapacity(int32_t dev_id){
@@ -669,30 +677,46 @@ void UnifiedCache::AccessCount(
 void UnifiedCache::FeatCacheLookup(int32_t* sampled_ids, int32_t* cache_index,
                                     int32_t* node_counter, float* dst_float_buffer,
                                     int32_t op_id, int32_t dev_id, cudaStream_t strm_hdl
-#ifdef MONITOR
-                                    , ull *dev_ctr = nullptr, ull *dev_hits = nullptr
+#ifdef MONITOR_DEEP
+                                    , ull *dev_ctr = nullptr, ull *dev_hits = nullptr, ull *inserts = nullptr
 #endif
                                     ){
     dim3 block_num(32, 1);
-	dim3 thread_num(1024, 1);
-    float** gpu_float_feature     = Global_Float_Feature_Cache(dev_id);
-    int32_t cpu_cache_capacity    = CPUCapacity();
-    int32_t gpu_cache_capacity    = GPUCapacity();
-    // feat_cache_lookup<<<block_num, thread_num, 0, (strm_hdl)>>>(
-    //     cpu_float_features_, float_feature_cache_[0], float_feature_len_,
-    //     sampled_ids, cache_index, 
-    //     cpu_cache_capacity, gpu_cache_capacity,
-    //     node_counter, dst_float_buffer,
-    //     op_id
-    // );
-    multiGPU_feat_cache_lookup<<<block_num, thread_num, 0, (strm_hdl)>>>(
-        cpu_float_features_, gpu_float_feature, float_feature_len_,
-        sampled_ids, cache_index, NodeCapacity(dev_id),
-        node_counter, dst_float_buffer,
-        total_num_nodes_,
-        dev_id, op_id
-#ifdef MONITOR
-        , dev_ctr, dev_hits
-#endif
-    );
+    dim3 thread_num(1024, 1);
+    if(!dyn_cache) {
+        float** gpu_float_feature     = Global_Float_Feature_Cache(dev_id);
+        int32_t cpu_cache_capacity    = CPUCapacity();
+        int32_t gpu_cache_capacity    = GPUCapacity();
+        // feat_cache_lookup<<<block_num, thread_num, 0, (strm_hdl)>>>(
+        //     cpu_float_features_, float_feature_cache_[0], float_feature_len_,
+        //     sampled_ids, cache_index, 
+        //     cpu_cache_capacity, gpu_cache_capacity,
+        //     node_counter, dst_float_buffer,
+        //     op_id
+        // );
+        multiGPU_feat_cache_lookup<<<block_num, thread_num, 0, (strm_hdl)>>>(
+            cpu_float_features_, gpu_float_feature, float_feature_len_,
+            sampled_ids, cache_index, NodeCapacity(dev_id),
+            node_counter, dst_float_buffer,
+            total_num_nodes_,
+            dev_id, op_id
+    #ifdef MONITOR_DEEP
+            , dev_ctr, dev_hits
+    #endif
+        );
+    } else {
+        // 0: Output offset
+        // 1: Num nodes
+        int32_t node_vals[2];
+        cudaMemcpyAsync(node_vals, node_counter + (op_id % INTRABATCH_CON) * 2, 8, cudaMemcpyDeviceToHost, strm_hdl);
+        //std::cout << "Batch size: " << node_vals[1] << " offset: " << node_vals[0] << "\n";
+        dyn_cache_accessor[dev_id / Kg_]->retrieve_and_touch(
+            &sampled_ids[node_vals[0]], node_vals[1], 
+            &dst_float_buffer[node_vals[0] * float_feature_len_], 
+            cpu_float_features_, total_num_nodes_, strm_hdl
+    #ifdef MONITOR_DEEP
+            , dev_hits, dev_ctr, inserts
+    #endif
+            );
+    }
 }

@@ -13,6 +13,7 @@
 #define D_WORD float
 #define D_BYTE char
 #define FULL_MASK 0xffffffff
+#define ull unsigned long long
 
 // Macro for checking cuda errors following a cuda launch or api call
 #define cudaCheckError()                                       \
@@ -51,15 +52,16 @@ public:
     cudaCheckError();
   }
   // One-time init function for cache parameters and seed cache values
-  void init_cache(int64_t nodes_per_gpu, int32_t feature_len, 
-                  float *cpu_features, int *index_array, int Kg, 
-                  int dev_start, int64_t total_nodes);
+  void init_cache(int64_t nodes_per_gpu, int32_t feature_len, float *cpu_features, 
+    int *index_array, int Kg, int dev_start, int64_t total_nodes);
   // CPU-side functions for cache access
   void insert_features(int64_t num_nodes, float *input_feats, int32_t *index_array, 
     int64_t total_nodes, int *failed_inserts = nullptr);
   void test_lookup_features(int64_t num_nodes, float *input_features, int32_t *index_array, 
-    int *success_lookups = nullptr);
-
+    int *success_lookups = nullptr, int *keys_found = nullptr);
+  void retrieve_and_touch(int32_t *nodeIds, int64_t num_nodes, float *output_buffer, 
+      float *input_feats, int total_nodes, cudaStream_t stream, ull *misses = nullptr, 
+      ull *accesses = nullptr, ull* inserts = nullptr);
 private:
     // Actual cache storage
     void **dev_cache_storage;
