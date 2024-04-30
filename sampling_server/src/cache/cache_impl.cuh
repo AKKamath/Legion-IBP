@@ -244,7 +244,7 @@ __global__ void multiGPU_feat_cache_lookup(
 	int32_t dev_id,
 	int32_t op_id
 #ifdef MONITOR_DEEP
-    , unsigned long long *dev_ctr = nullptr, unsigned long long *dev_misses = nullptr
+    , unsigned long long *dev_ctr = nullptr, unsigned long long *dev_misses = nullptr, int *opt_hits_tracker = nullptr
 #endif
     )
 {
@@ -274,7 +274,10 @@ __global__ void multiGPU_feat_cache_lookup(
 			fidx = gidx % cache_capacity;
 			foffset = thread_idx % float_feature_len;
 #ifdef MONITOR_DEEP
-            atomicAdd(&ctr, 1);
+            if(foffset == 0 && dev_id == 0) {
+                atomicAdd(&ctr, 1);
+                atomicAdd_system(opt_hits_tracker + sampled_ids[node_off + (thread_idx / float_feature_len)], 1);
+            }
 #endif
 			if(gidx < 0){/*cache miss*/
 				fidx = sampled_ids[node_off + (thread_idx / float_feature_len)];
@@ -282,10 +285,8 @@ __global__ void multiGPU_feat_cache_lookup(
 					dst_float_buffer[int64_t(int64_t((int64_t(node_off) * float_feature_len)) + thread_idx)] = cpu_float_features[int64_t(int64_t(int64_t(fidx%total_num_nodes) * float_feature_len) + foffset)];
 				}
 #ifdef MONITOR_DEEP
-                else {
-                    printf("Weird miss: %d, %d\n", fidx, node_off + (thread_idx / float_feature_len));
-                }
-                atomicAdd(&misses, 1);
+                if(foffset == 0 && dev_id == 0)
+                    atomicAdd(&misses, 1);
 #endif
 			}else{/*cache hit, find global position*/
 				dst_float_buffer[int64_t(int64_t((int64_t(node_off) * float_feature_len)) + thread_idx)] = gpu_float_feature[didx][int64_t(int64_t(int64_t(fidx) * float_feature_len) + foffset)];

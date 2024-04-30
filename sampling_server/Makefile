@@ -64,7 +64,7 @@ shared: core
 ################################## core ########################################### 
 CORE_DIR := $(SRC_DIR)
 CORE_BUILT_DIR := $(BUILD_DIR)/built
-CORE_DIRS := $(shell find "src" -maxdepth 3 -type d)
+CORE_DIRS := $(shell find "src" -maxdepth 1 -type d)
 CORE_H := $(foreach dir,$(CORE_DIRS),$(wildcard $(dir)/*.h))
 CORE_CUH := $(foreach dir,$(CORE_DIRS),$(wildcard $(dir)/*.cuh))
 CORE_CU := $(foreach dir,$(CORE_DIRS),$(wildcard $(dir)/*.cu))

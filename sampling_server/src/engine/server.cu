@@ -185,12 +185,12 @@ public:
         batches = 0;
         sampler_time = 0;
 #ifdef MONITOR_DEEP
-        cudaMalloc(&dev_ctr, sizeof(ull));
-        cudaMalloc(&dev_hits, sizeof(ull));
-        cudaMalloc(&inserts, sizeof(ull));
-        cudaMemset(dev_ctr, 0, sizeof(ull));
-        cudaMemset(dev_hits, 0, sizeof(ull));
-        cudaMemset(inserts, 0, sizeof(ull));
+        this->cache = (UnifiedCache*)(params->cache);
+#endif
+#ifdef MONITOR
+        this->cache_time = new int64_t();
+        this->lookup_time = new int64_t();
+        this->batch_size = new int64_t();
 #endif
 
         /*initialize GPU environment*/
@@ -286,12 +286,10 @@ public:
             op_params_[i]->in_memory    = in_memory;
             op_params_[i]->hop_num      = hop_num;
             op_params_[i]->dyn_cache    = params->dyn_cache;
-#ifdef MONITOR_DEEP
-            op_params_[i]->dev_ctr      = dev_ctr;
-            op_params_[i]->dev_hits     = dev_hits;
-            op_params_[i]->inserts      = inserts;
-#endif
 #ifdef MONITOR
+            op_params_[i]->cache_time   = this->cache_time;
+            op_params_[i]->lookup_time   = this->lookup_time;
+            op_params_[i]->batch_size   = this->batch_size;
             cudaEventCreate(&events_start_[i]);
 #endif
         }
@@ -376,26 +374,10 @@ public:
         ++batches;
 
         env->IPCPost(local_dev_id_, current_pipe_);
-        if(batch_id % 100 == 0 && local_dev_id_ == 0){
+        if(batches % 1000 == 0 && batches > 0 && local_dev_id_ == 0){
             std::cout<<"batch id: "<<batch_id<< "; " << batches << " batches, time per sample: " << sampler_time / batches << " us\n";
 #ifdef MONITOR_DEEP
-            ull host_ctr, host_misses;
-            cudaMemcpy(&host_ctr, dev_ctr, sizeof(ull), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&host_misses, dev_hits, sizeof(ull), cudaMemcpyDeviceToHost);
-            cudaMemset(dev_ctr, 0, sizeof(ull));
-            cudaMemset(dev_hits, 0, sizeof(ull));
-            if(dyn_cache){
-                ull host_inserts;
-                cudaMemcpy(&host_inserts, inserts, sizeof(ull), cudaMemcpyDeviceToHost);
-                cudaMemset(inserts, 0, sizeof(ull));
-                std::cout << "Miss rate: "<< (float)host_misses * 100 / (float)host_ctr << "% (hits: " 
-                          << host_ctr - host_misses  << ", " << "inserts: " << host_inserts << ", "
-                          << "total: " << host_ctr << ")\n";
-            } else {
-                std::cout << "Miss rate: "<< (float)host_misses * 100 / (float)host_ctr << "% (hits: " 
-                          << (host_ctr - host_misses) / float_feature_len_ << ", "
-                          << "total: " << host_ctr / float_feature_len_ << ")\n";
-            }
+        cache->CalcCacheStats(local_dev_id_);
 #endif
 #ifdef MONITOR
             for(int i = 0; i < op_num_; i++){
@@ -403,6 +385,9 @@ public:
                 op_time[i] = 0;
             }
             std::cout<<"\n";
+            std::cout<<" Transfer throughput: "<< (double)*batch_size * (double)float_feature_len_ * 4.0 / 1024.0 / (double)*cache_time <<" GBPS ";
+            std::cout<<" Avg lookup time: "<< (double)*lookup_time / (1000.0 * batches) <<" ms\n";
+            *lookup_time = 0;
 #endif
             sampler_time = batches = 0;
         }
@@ -442,9 +427,12 @@ private:
 #ifdef MONITOR
     std::vector<float> op_time;
     std::vector<cudaEvent_t> events_start_;
+    int64_t *cache_time;
+    int64_t *lookup_time;
+    int64_t *batch_size;
 #endif
 #ifdef MONITOR_DEEP
-    ull *dev_ctr, *dev_hits, *inserts;
+    UnifiedCache *cache;
 #endif
     
     std::vector<cudaStream_t> streams_;

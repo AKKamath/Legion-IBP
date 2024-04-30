@@ -1,24 +1,27 @@
 cd dataset/
+
+: '
 # # create webgraph environment
-mkdir lib
+mkdir -p lib
 cp webgraph-3.5.2.jar lib/
 tar -xzvf webgraph-3.6.8-deps.tar.gz -C lib
 
-mkdir ukunion
+mkdir -p ukunion
 cd ukunion
 wget http://data.law.di.unimi.it/webdata/uk-union-2006-06-2007-05/uk-union-2006-06-2007-05-underlying.graph
 wget http://data.law.di.unimi.it/webdata/uk-union-2006-06-2007-05/uk-union-2006-06-2007-05-underlying.properties
 cd ..
+
 java -cp "lib/*" it.unimi.dsi.webgraph.ArcListASCIIGraph ukunion/uk-union-2006-06-2007-05-underlying ukunion/ukunion-edgelist.txt
 
-mkdir xtrapulp_result
+mkdir -p xtrapulp_result
 # generate legion-format edge_src edge_dst, and the input of xtrapulp
 g++ gen_legion_xtrapulp_fomat.cpp -o gen_legion_xtrapulp_fomat
 ./gen_legion_xtrapulp_fomat ukunion ukunion-edgelist.txt
 # generate training sets, validation sets, and test sets
 python gen_sets.py --dataset_name ukunion
-
-# 2.If you don't have mpi, install mpi first.
+'
+# 2.If you dont have mpi, install mpi first.
 
 # wget https://download.open-mpi.org/release/open-mpi/v3.1/openmpi-3.1.0.tar.gz
 # tar zxf openmpi-3.1.0.tar.gz

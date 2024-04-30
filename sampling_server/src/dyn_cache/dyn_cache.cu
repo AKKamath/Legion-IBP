@@ -3,7 +3,7 @@
 
 void DynamicCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len, 
                               float *cpu_features, int *index_array, int Kg, 
-                              int dev_start, int64_t total_nodes) {
+                              int dev_start, int64_t total_nodes, DYN_FLAGS flags) {
     std::cout << "Initializing dynamic cache with " << nodes_per_gpu 
               << " (out of " << total_nodes << ") per GPU and " 
               << Kg << " GPUs\n";
@@ -11,8 +11,11 @@ void DynamicCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
 
     this->num_gpus = Kg;
     this->feature_len = feature_len;
-    this->num_sets = (nodes_per_gpu / num_ways) * num_gpus;
+    this->num_sets = ((nodes_per_gpu * 2 + num_ways - 1) / num_ways) * num_gpus;
     this->cache_capacity = num_sets * num_ways;
+    this->flags = flags;
+
+    std::cout << "Number of sets: " << num_sets << ", cache capacity: " << cache_capacity << "\n";
 
     auto start = TIME_NOW;
 
@@ -69,13 +72,14 @@ void DynamicCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     // Insert features into the dynamic cache
     insert_features(num_nodes, cpu_features, index_array, total_nodes, dev_tracker);
     ++lru_counter;
-    cudaCheckError();
     cudaDeviceSynchronize();
+    cudaCheckError();
     end = TIME_NOW;
     std::cout << "Time taken to insert: " << (float)TIME_DIFF(start, end) / 1000.0 << " ms\n";
 
     int failed_inserts;
     cudaMemcpy(&failed_inserts, dev_tracker, sizeof(int), cudaMemcpyDeviceToHost);
+    cudaCheckError();
     std::cout << "Failed inserts: " << failed_inserts << " out of " << num_nodes << "\n";
     
     // Reset variable for tracking operations
@@ -103,7 +107,7 @@ void DynamicCache::insert_features(int64_t num_nodes, float *input_feats,
 {
     insert_features_kernel<<<16, 512>>>(dev_cache_storage, dev_cache_key, 
         dev_cache_lru, num_nodes, feature_len, input_feats, index_array, 
-        lru_counter, num_gpus, total_nodes, num_ways, num_sets, failed_inserts);
+        lru_counter, num_gpus, total_nodes, num_ways, num_sets, flags, failed_inserts);
 }
 
 // Find features in cache
@@ -120,8 +124,28 @@ void DynamicCache::retrieve_and_touch(int32_t *nodeIds, int64_t num_nodes,
     ull *misses, ull *lookups, ull *inserts)
 {
     ++lru_counter;
-    retrieve_and_touch_kernel<<<32, 1024, 0, stream>>>(
+    retrieve_and_touch_kernel<<<16, 512, 0, stream>>>(
         dev_cache_storage, dev_cache_key, dev_cache_lru, num_nodes, feature_len, 
         output_buffer, input_feats, nodeIds, lru_counter, num_gpus, total_nodes, 
-        num_ways, num_sets, misses, lookups, inserts);
+        num_ways, num_sets, flags, misses, lookups, inserts);
+}
+
+void DynamicCache::retrieve(int32_t *nodeIds, int64_t num_nodes, 
+    int *node_index, cudaStream_t stream, 
+    ull *misses, ull *lookups, ull *inserts)
+{
+    retrieve_kernel<<<16, 512, 0, stream>>>(
+        dev_cache_storage, dev_cache_key, node_index, num_nodes, 
+        nodeIds, num_gpus, 
+        num_ways, num_sets, flags, misses, lookups, inserts);
+}
+
+void DynamicCache::transfer(int32_t *nodeIds, int64_t num_nodes, 
+    float *output_buffer, int *node_index, float *input_feats, int total_nodes, cudaStream_t stream, 
+    ull *misses, ull *lookups, ull *inserts)
+{
+    transfer_kernel<<<32, 512, 0, stream>>>(
+        dev_cache_storage, dev_cache_key, dev_cache_lru, node_index, num_nodes, feature_len, 
+        output_buffer, input_feats, nodeIds, lru_counter, num_gpus, total_nodes, 
+        num_ways, num_sets, flags, misses, lookups, inserts);
 }

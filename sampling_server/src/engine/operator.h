@@ -1,6 +1,7 @@
 #ifndef OPERATOR_H
 #define OPERATOR_H
 #define ull unsigned long long
+#include <stdint.h>
 
 struct OpParams {
     int device_id;
@@ -16,10 +17,10 @@ struct OpParams {
     bool in_memory;
     int  hop_num;
     int dyn_cache;
-#ifdef MONITOR_DEEP
-    ull *dev_ctr;
-    ull *dev_hits;
-    ull *inserts;
+#ifdef MONITOR
+    int64_t *cache_time;
+    int64_t *lookup_time;
+    int64_t *batch_size;
 #endif
 };
 

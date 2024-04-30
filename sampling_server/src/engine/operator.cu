@@ -49,7 +49,11 @@ public:
         int32_t count               = params->neighbor_count;
         int32_t device_id           = params->device_id;
 
-        RandomSample(params->stream, graph, cache, memorypool, count, device_id, op_id_, is_presc, params->dyn_cache);
+        RandomSample(params->stream, graph, cache, memorypool, count, device_id, op_id_, is_presc, params->dyn_cache
+#ifdef MONITOR
+        , params->lookup_time
+#endif        
+        );
         cudaEventRecord(((params->event)), ((params->stream)));
         cudaCheckError();
     }
@@ -69,18 +73,27 @@ public:
     void run(OpParams* params) override {
         UnifiedCache* cache         = (UnifiedCache*)(params->cache);
         MemoryPool* memorypool      = (MemoryPool*)(params->memorypool);
+#ifdef MONITOR
+        auto start = TIME_NOW;
+#endif
         int32_t device_id           = params->device_id;
-#ifdef MONITOR_DEEP
-        ull *dev_ctr                = (ull*)(params->dev_ctr);
-        ull *dev_hits               = (ull*)(params->dev_hits);
-        ull *inserts                = (ull*)(params->inserts);
-#endif
-        FeatureCacheLookup(params->stream, cache, memorypool, op_id_, device_id, params->dyn_cache
-#ifdef MONITOR_DEEP
-            , dev_ctr, dev_hits, inserts
-#endif
-            );
+        FeatureCacheLookup(params->stream, cache, memorypool, op_id_, 
+                           device_id, params->dyn_cache);
         cudaEventRecord(((params->event)), ((params->stream)));
+#ifdef MONITOR
+        cudaDeviceSynchronize();
+
+	    int32_t* node_counter 		= memorypool->GetNodeCounter();
+        // 0: Output offset
+        // 1: Num nodes
+        int32_t node_vals[2];
+        cudaMemcpy(node_vals, node_counter + (op_id_ % 3) * 2, 8, cudaMemcpyDeviceToHost);
+
+        auto end = TIME_NOW;
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+        *(params->cache_time) += duration.count();
+        *(params->batch_size) += node_vals[1];
+#endif
         cudaCheckError();
     }
 private:

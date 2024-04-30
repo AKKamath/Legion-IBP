@@ -1,6 +1,10 @@
 #include "storage_management.cuh"
 #include "storage_management_impl.cuh"
 
+#include <chrono>
+#define TIME_NOW std::chrono::steady_clock::now()
+#define TIME_DIFF(start, end) std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()
+#define TIME_DIFF_SEC(start, end) std::chrono::duration_cast<std::chrono::seconds>(end - start).count()
 
 void StorageManagement::EnableP2PAccess(){
     int32_t device_count = -1;
@@ -168,6 +172,26 @@ void StorageManagement::LoadFeature(BuildInfo* info){
     std::cout<<"Finish Reading All Files\n";
     // partition nodes
 
+    if(info->dyn_cache & DYN_PROXIM) {
+        printf("Proximity reorderding\n");
+        auto start = TIME_NOW;
+        std::set<int64_t> training_nodes;
+        for(int i = 0; i < training_set_num_; ++i) {
+            training_nodes.insert(training_ids[i]);
+        }
+        bool *visited = (bool*)malloc(sizeof(bool) * node_num);
+        proximity_order(info->csr_node_index, info->csr_dst_node_ids, 
+            node_num, 0, training_nodes, visited, training_ids);
+        free(visited);
+        bool fail = false;
+        for(int i = 0; i < training_set_num_; ++i) {
+            if(training_nodes.find(training_ids[i]) == training_nodes.end())
+                fail = true;
+            training_nodes.erase(training_ids[i]);
+        }
+        printf("Failed? %d; time: %lu\n", fail, TIME_DIFF_SEC(start, TIME_NOW));
+    }
+
     int trainingset_count = 0;
     for(int32_t i = 0; i < training_set_num_; i+=1){
         int32_t tid = training_ids[i];
@@ -176,6 +200,9 @@ void StorageManagement::LoadFeature(BuildInfo* info){
             part_id = partition_index[tid];
         }else{
             part_id = tid % partition_count;
+            if(info->dyn_cache & DYN_PROXIM) {
+                part_id = i * partition_count / training_set_num_;
+            }
         }
         if(part_id < partition_count){
             (info->training_set_ids[part_id]).push_back(tid);

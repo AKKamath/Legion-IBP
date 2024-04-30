@@ -66,7 +66,7 @@ def Run(args):
         path = args.dataset_path + "/ukunion/"
         vertices_num = 133633040
         edges_num = 5507679822
-        features_dim = 256
+        features_dim = 116
         train_set_num = 13363304
         valid_set_num = 100000
         test_set_num = 100000
@@ -86,6 +86,30 @@ def Run(args):
         train_set_num = 95520748
         valid_set_num = 100000
         test_set_num = 100000
+    elif args.dataset_name == "cora":
+        path = args.dataset_path + "/cora/"
+        vertices_num = 19793
+        edges_num = 126842
+        features_dim = 8710
+        train_set_num = 7917
+        valid_set_num = 1979
+        test_set_num = 9897
+    elif args.dataset_name == "reddit":
+        path = args.dataset_path + "/reddit/"
+        vertices_num = 232965
+        edges_num = 114615892
+        features_dim = 602
+        train_set_num = 153431
+        valid_set_num = 23831
+        test_set_num = 55703
+    elif args.dataset_name == "pubmed":
+        path = args.dataset_path + "/pubmed/"
+        vertices_num = 19717
+        edges_num = 88651
+        features_dim = 500
+        train_set_num = 7886
+        valid_set_num = 1972
+        test_set_num = 9859
     else:
         print("invalid dataset path")
         exit

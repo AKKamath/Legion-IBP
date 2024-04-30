@@ -10,6 +10,8 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include <set>
+#include <queue>
 #include <unordered_map>
 #include <numeric>
 #include <math.h>
@@ -156,6 +158,73 @@ void mmap_labels_read(std::string &labels_file, std::vector<int32_t>& labels){
     }
     close(fd);
     return;
+}
+
+void proximity_order(int64_t* csr_node_index, int32_t* csr_dst_node_ids, 
+        int32_t num_nodes, int64_t source, const std::set<int64_t> &training_nodes, 
+        bool* visited, std::vector<int32_t> &bfs_seq){
+
+  const int64_t *indptr_data = csr_node_index;
+  const int32_t *indices_data = csr_dst_node_ids;
+  memset(visited, 0, sizeof(bool) * num_nodes);
+  //std::vector<bool> visited(num_nodes);
+  std::queue<int64_t> Q;
+  //std::vector<int64_t> bfs_seq;
+  int64_t seq_cnt = 0;
+  
+  visited[source] = true;
+  Q.push(source);
+  if(training_nodes.find(source) != training_nodes.end()){
+    bfs_seq[seq_cnt++] = source;
+  }
+
+  // traverse entire graph
+  while(!Q.empty()){
+    int64_t u = Q.front();
+    Q.pop();
+    for(auto idx = indptr_data[u]; idx < indptr_data[u+1]; ++idx){
+      auto v = indices_data[idx];
+      if (!visited[v]) {
+        visited[v] = true;
+        Q.push(v);
+        if(training_nodes.find(v) != training_nodes.end()){
+	        bfs_seq[seq_cnt++] = v;
+	    }
+      }
+    }
+  }
+
+  //ensure all node are traversed
+  int64_t s = source;
+  for(int64_t i = 0; i < num_nodes; ++i){
+    s++;
+    if(s == num_nodes)
+      s = 0;
+    if(visited[s])
+      continue;
+
+    visited[s] = true;
+    Q.push(s);
+    if(training_nodes.find(s) != training_nodes.end()){
+      bfs_seq[seq_cnt++] = s;
+    }
+    
+    // traverse entire graph
+    while(!Q.empty()){
+      int64_t u = Q.front();
+      Q.pop();
+      for(auto idx = indptr_data[u]; idx < indptr_data[u+1]; ++idx){
+        auto v = indices_data[idx];
+        if (!visited[v]) {
+          visited[v] = true;
+          Q.push(v);
+          if(training_nodes.find(v) != training_nodes.end()){
+            bfs_seq[seq_cnt++] = v;
+          }
+        }
+      }
+    }
+  }
 }
 
 #endif

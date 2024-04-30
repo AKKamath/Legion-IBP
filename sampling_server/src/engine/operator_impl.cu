@@ -9,7 +9,7 @@
 #include <thrust/random/uniform_int_distribution.h>
 #include <thrust/random/linear_congruential_engine.h>
 
-#define OP_THREAD_NUM 1024
+#define OP_THREAD_NUM 512
 #define SH_MEM_SIZE 1024
 
 // Macro for checking cuda errors following a cuda launch or api call
@@ -408,7 +408,11 @@ void RandomSample(
   int32_t         dev_id,
   int32_t         op_id,
   bool            is_presc,
-  int 			  dyn_cache) 
+  int 			  dyn_cache
+#ifdef MONITOR
+  , int64_t *lookup_time
+#endif
+  ) 
 {		
 
 	if(graph == nullptr){
@@ -491,11 +495,20 @@ void RandomSample(
 	cudaCheckError();
 
 	counter_update<<<1, 1, 0, (strm_hdl)>>>(node_counter, edge_counter, op_id, 0, 0);		
-	cudaCheckError();	
+	cudaCheckError();
 
-	if(!is_presc && !dyn_cache){
+	if(!is_presc){
+#ifdef MONITOR
+		cudaDeviceSynchronize();
+		auto start = TIME_NOW;
+#endif
 		cache->FindFeat(sampled_ids, cache_index, node_counter, op_id, strm_hdl, dev_id);
 		cudaCheckError();
+#ifdef MONITOR
+		cudaDeviceSynchronize();
+		auto end = TIME_NOW;
+		*lookup_time += TIME_DIFF(start, end);
+#endif
 	}
 
 }
@@ -508,12 +521,6 @@ void FeatureCacheLookup(
   int32_t         op_id,
   int32_t         dev_id,
   int 			  dyn_cache
-#ifdef MONITOR_DEEP
-  ,
-  ull*            dev_ctr,
-  ull*            dev_hits,
-  ull*			  inserts
-#endif
   )
 {	
 	int32_t* sampled_ids 		= memorypool->GetSampledIds();
@@ -524,11 +531,7 @@ void FeatureCacheLookup(
 
 	counter_update<<<1, 1, 0, (strm_hdl)>>>(node_counter, edge_counter, op_id, 0, 0);
 	cudaCheckError();
-	cache->FeatCacheLookup(sampled_ids, cache_index, node_counter, dst_float_buffer, op_id, dev_id, strm_hdl
-#ifdef MONITOR_DEEP
-		, dev_ctr, dev_hits, inserts
-#endif
-		);
+	cache->FeatCacheLookup(sampled_ids, cache_index, node_counter, dst_float_buffer, op_id, dev_id, strm_hdl);
 	cudaCheckError();
 }	
 

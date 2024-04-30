@@ -4,6 +4,7 @@
 #include "graph_storage.cuh"
 #include "feature_storage.cuh"
 #include "../dyn_cache/dyn_cache.cuh"
+#include "../dyn_cache/static_cache.cuh"
 
 #include <iostream>
 #include <vector>
@@ -127,12 +128,11 @@ public:
     
     void FeatCacheLookup(int32_t* sampled_ids, int32_t* cache_index,
                          int32_t* node_counter, float* dst_float_buffer,
-                         int32_t op_id, int32_t dev_id, cudaStream_t strm_hdl
-#ifdef MONITOR_DEEP
-                         , ull *dev_ctr, ull *dev_hits, ull *inserts
-#endif
-                         );
+                         int32_t op_id, int32_t dev_id, cudaStream_t strm_hdl);
 
+#ifdef MONITOR_DEEP
+    void CalcCacheStats(int dev_id);
+#endif
 private:    
     int32_t NodeCapacity(int32_t dev_id);
 
@@ -149,7 +149,7 @@ private:
     int32_t device_count_;
 
     std::vector<CacheController*> cache_controller_;
-    std::vector<DynamicCache*> dyn_cache_accessor;
+    std::vector<StaticCache*> dyn_cache_accessor;
 
     std::vector<int32_t*> QF_;
     std::vector<int32_t*> QT_;
@@ -176,6 +176,13 @@ private:
     int32_t float_feature_len_;
     int32_t total_num_nodes_;
     float*  cpu_float_features_;
+
+#ifdef MONITOR_DEEP
+    int *opt_hits_tracker;
+    ull *dev_misses;
+    ull *dev_ctr;
+    ull *inserts;
+#endif
 
     bool is_presc_;
     int dyn_cache;

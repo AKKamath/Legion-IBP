@@ -35,6 +35,9 @@ void RandomSample(
   int32_t         op_id,
   bool            is_presc,
   int             dyn_cache
+#ifdef MONITOR
+  , int64_t *lookup_time
+#endif
 );
 
 extern "C"
@@ -45,12 +48,6 @@ void FeatureCacheLookup(
   int32_t         op_id,
   int32_t         dev_id,
   int             dyn_cache
-#ifdef MONITOR_DEEP
-  ,
-  ull*            dev_ctr,
-  ull*            dev_hits,
-  ull*            inserts
-#endif
 );
 
 extern "C"
