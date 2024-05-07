@@ -10,5 +10,10 @@ training_backend/build
 training_backend/dist
 training_backend/ipcservice.egg-info
 dataset/products
+dataset/cora
+dataset/reddit
+dataset/pubmed
+dataset/mag
+dataset/citeseer
 **/*.log
 **/*.png

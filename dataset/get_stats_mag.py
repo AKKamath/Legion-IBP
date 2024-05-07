@@ -9,8 +9,6 @@ paper_offset = dataset.num_authors + dataset.num_institutions
 num_nodes = paper_offset + dataset.num_papers
 num_features = dataset.num_paper_features
 
-print(dataset)
-
 split_idx = dataset.get_idx_split()
 train_idx = (torch.LongTensor(split_idx["train"]) + paper_offset).numpy()
 valid_idx = (torch.LongTensor(split_idx["valid"]) + paper_offset).numpy()
@@ -18,32 +16,17 @@ test_idx  = (torch.LongTensor(split_idx["test-dev"]) + paper_offset).numpy()
 #graph, label = dataset[0] # graph: library-agnostic graph object
 label = dataset.paper_label
 
-trainset = train_idx.astype(np.int32)
-trainset.tofile('./mag/'+'trainingset')
-validset = valid_idx.astype(np.int32)
-validset.tofile('./mag/'+'validationset')
-testset = test_idx.astype(np.int32)
-testset.tofile('./mag/'+'testingset')
-labels = label.astype(np.int32)
-labels.tofile('./mag/'+'labels')
-#features = .astype(np.float16)
-dataset.paper_feat.tofile('./mag/'+'features')
+print(dataset.paper_feat)
 
+print(len(train_idx), len(valid_idx), len(test_idx))
+print(len(label))
 
 # Edge index in COO format
 edge_index = dataset.edge_index('paper', 'cites', 'paper')
 print(num_nodes)
-# Convert to COO matrix
-coo = coo_matrix((edge_index[1], (edge_index[0], edge_index[1])), shape=(num_nodes, num_nodes))
-
-# Convert to CSR format
-csr = coo.tocsr()
-
-# Get the CSR row and col arrays
-edge_src = (csr.indptr).astype(np.int64)
-edge_src.tofile('./mag/'+'edge_src')
-edge_dst = (csr.indices).astype(np.int32)
-edge_dst.tofile('./mag/'+'edge_dst')
+print(len(edge_index))
+print(len(edge_index[0]))
+print(len(edge_index[1]))
 '''
 xtraformat = np.array(edge_index.T.flatten().tolist())
 xtraformat = xtraformat.astype(np.int32)

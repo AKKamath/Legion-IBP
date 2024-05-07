@@ -110,6 +110,22 @@ def Run(args):
         train_set_num = 7886
         valid_set_num = 1972
         test_set_num = 9859
+    elif args.dataset_name == "mag":
+        path = args.dataset_path + "/mag/"
+        vertices_num = 244160499
+        edges_num = 1297748926
+        features_dim = 384
+        train_set_num = 1112392
+        valid_set_num = 138949
+        test_set_num = 88092
+    elif args.dataset_name == "citeseer":
+        path = args.dataset_path + "/citeseer/"
+        vertices_num = 3327
+        edges_num = 9228
+        features_dim = 3703
+        train_set_num = 1330
+        valid_set_num = 333
+        test_set_num = 1664
     else:
         print("invalid dataset path")
         exit
