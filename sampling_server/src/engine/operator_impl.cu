@@ -165,7 +165,7 @@ void BatchGenerate(
 
 	counter_update<<<1, 1, 0, (strm_hdl)>>>(node_counter, edge_counter, 0, size, hop_num);
 	cudaCheckError();
-	if(!is_presc && !dyn_cache){
+	if(!is_presc){
 		cache->FindFeat(sampled_ids, cache_index, node_counter, op_id, strm_hdl, dev_id);
 		cudaCheckError();
 	}

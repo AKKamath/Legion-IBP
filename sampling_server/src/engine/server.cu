@@ -234,7 +234,7 @@ public:
         cache->InitializeCacheController(local_dev_id_, total_num_nodes);/*control cache memory by current actor*/
 
         memorypool_                     = new MemoryPool(interbatch_concurrency);
-        int32_t* cache_search_buffer    = (int32_t*)d_alloc_space(num_ids_ * sizeof(int32_t));
+        int32_t* cache_search_buffer    = (int32_t*)d_alloc_space(num_ids_ * sizeof(int64_t));
         memorypool_->SetCacheSearchBuffer(cache_search_buffer);
         uint32_t* accessed_map          = (uint32_t*)d_alloc_space(int64_t((int64_t(total_num_nodes / 32)  + 1)* sizeof(uint32_t)));
         memorypool_->SetAccessedMap(accessed_map);

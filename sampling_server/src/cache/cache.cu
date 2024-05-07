@@ -326,7 +326,7 @@ void UnifiedCache::FindFeat(
         cudaMemcpy(node_vals, node_counter + (op_id % INTRABATCH_CON) * 2, 8, cudaMemcpyDeviceToHost);
         dyn_cache_accessor[dev_id / Kg_]->retrieve(
             &sampled_ids[node_vals[0]], node_vals[1], 
-            cache_offset, static_cast<cudaStream_t>(stream)
+            (int64_t*)cache_offset, static_cast<cudaStream_t>(stream)
     #ifdef MONITOR_DEEP
             , dev_misses, dev_ctr, inserts
     #endif
@@ -771,7 +771,7 @@ void UnifiedCache::FeatCacheLookup(int32_t* sampled_ids, int32_t* cache_index,
         //std::cout << "Batch size: " << node_vals[1] << " offset: " << node_vals[0] << "\n";
         dyn_cache_accessor[dev_id / Kg_]->transfer(
             &sampled_ids[node_vals2[0]], node_vals2[1], 
-            &dst_float_buffer[node_vals2[0] * float_feature_len_], cache_index,
+            &dst_float_buffer[node_vals2[0] * float_feature_len_], (int64_t*)cache_index,
             cpu_float_features_, total_num_nodes_, strm_hdl
     #ifdef MONITOR_DEEP
             , dev_misses, dev_ctr, inserts

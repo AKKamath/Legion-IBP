@@ -15,6 +15,8 @@
 #define FULL_MASK 0xffffffff
 #define ull unsigned long long
 
+#define BITS_TO_BYTES(x) ((x + 7) / 8)
+
 // Macro for checking cuda errors following a cuda launch or api call
 #define cudaCheckError()                                       \
   {                                                            \
@@ -26,10 +28,14 @@
     }                                                          \
   }
 
+#define CUDA_CHECK(a) \
+    { a; cudaCheckError(); }
+
 enum DYN_FLAGS : int {
   DYN_ENABLE = (1<<0),
   DYN_SHADOW = (1<<1),
   DYN_PROXIM = (1<<2),
+  DYN_COMP   = (1<<3),
 };
 
 typedef int LRU;
@@ -83,6 +89,25 @@ __inline__ __device__ void memcpy_warp(const void *dest, const void *src, size_t
     }
 }
 
+// Optimized aligned CPU -> GPU data copy function
+__inline__ __device__ void byte_memcpy_warp(const void *dest, const void *src, size_t size) 
+{
+    size *= sizeof(D_WORD) / sizeof(char);
+    int threadId = threadIdx.x % DWARP_SIZE;
+    __syncwarp();
+    int offset = (GPU_CL_SIZE - (((uint64_t)src) % GPU_CL_SIZE)) / sizeof(char);
+    for(int k = threadId + offset; k < size; k += DWARP_SIZE) {
+        volatile char *dest_arr = ((char *)dest) + k;
+        char *src_arr  = ((char *)src)  + k;
+        *dest_arr = *src_arr;
+    }
+    for(int k = threadId; k < size; k += DWARP_SIZE) {
+        volatile char *dest_arr = ((char *)dest) + k;
+        char *src_arr  = ((char *)src)  + k;
+        *dest_arr = *src_arr;
+    }
+}
+
 // Helper to find min value in warp
 __inline__ __device__ int reduceMinSync(unsigned mask, int val)
 {
@@ -93,10 +118,33 @@ __inline__ __device__ int reduceMinSync(unsigned mask, int val)
             val = tmpVal;
         }
     }
+    val = __shfl_sync(mask, val, 0);
     return val;
 #else
     return __reduce_min_sync(mask, val);
 #endif
+}
+
+// Helper to find min value in warp
+__inline__ __device__ int32_t warpInclusiveScanSync(unsigned mask, int32_t val)
+{
+    for (int offset = 1; offset < DWARP_SIZE; offset <<= 1) {
+        val += __shfl_up_sync(mask, val, offset);
+    }
+    return val;
+}
+
+// Helper to find min value in warp
+__inline__ __device__ int32_t warpExclusiveScanSync(unsigned mask, int32_t val)
+{
+    int32_t initial_val = val;
+    for (int offset = 1; offset < DWARP_SIZE; offset <<= 1) {
+        val += __shfl_up_sync(mask, val, offset);
+        // Needed because non-offset elements just add themselves
+        if(threadIdx.x % DWARP_SIZE < offset)
+            val /= 2;
+    }
+    return val - initial_val;
 }
 
 #endif

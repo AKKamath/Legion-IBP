@@ -28,26 +28,25 @@ __inline__ __device__ int64_t value_to_gpu_index(int64_t value, int64_t num_sets
     return value / (num_sets * num_ways);
 }
 
-
-__global__ void static_reset_cache_metadata(int *cache_keys, int *cache_lru, int64_t nodes) 
+__global__ void static_reset_cache_metadata(int *cache_keys, ull *cache_val, int64_t nodes) 
 {
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
     for(int i = threadId; i < nodes; i += blockDim.x * gridDim.x) {
         cache_keys[i] = -1;
-        cache_lru[i] = -1;
+        cache_val[i] = -1;
     }
 }
 
 // Returns index of inserted feature or -1 if failed to insert
 __inline__ __device__ int static_insert_single_feature(
-    int **dev_cache_keys, int **dev_cache_vals, int key,
-    int val, int num_gpus, int num_ways, int32_t num_sets)
+    int **dev_cache_keys, ull **dev_cache_vals, int key,
+    ull val, int num_gpus, int num_ways, int32_t num_sets)
 {
     // Get details of set to insert into
     int devId = key_to_gpu_index(key, num_sets, num_gpus);
     int setId = key_to_set_index(key, num_sets, num_gpus);
     int *cache_keys = dev_cache_keys[devId];
-    int *cache_vals = dev_cache_vals[devId];
+    ull *cache_vals = dev_cache_vals[devId];
 
     int laneId = threadIdx.x % DWARP_SIZE;
     int index, candidates, empty_slot, i;
@@ -98,7 +97,7 @@ __inline__ __device__ int static_insert_single_feature(
 
 // Bulk insert into cache
 __global__ void static_insert_features_kernel(void *cache, int **cache_key, 
-    int **cache_val, int gpu_id, int num_gpus, int64_t num_nodes, int64_t feature_len, 
+    ull **cache_val, int gpu_id, int num_gpus, int64_t num_nodes, int64_t feature_len, 
     float *cpu_features, int32_t *index_array, int64_t total_nodes, 
     int num_ways, int32_t num_sets, int dyn_flags, int *failed_inserts = nullptr)
 {
@@ -114,7 +113,7 @@ __global__ void static_insert_features_kernel(void *cache, int **cache_key,
                     &cpu_features[nodeId * feature_len], feature_len);
         __syncwarp();
         
-        int64_t value = offset_to_value(i, gpu_id, num_sets, num_ways);
+        ull value = offset_to_value(i, gpu_id, num_sets, num_ways);
         // Attempt an insert. Check if there's enough space for padded read on both sides
         int slot = static_insert_single_feature(cache_key, cache_val, nodeId, value, 
             num_gpus, num_ways, num_sets);
@@ -127,7 +126,7 @@ __global__ void static_insert_features_kernel(void *cache, int **cache_key,
 
 // [TEST] Check if features properly copied into cache
 __global__ void static_test_lookup_features_kernel(void **dev_cache, int **dev_cache_key, 
-    int **dev_cache_val, int64_t num_nodes, int64_t feature_len, void *cpu_features, 
+    ull **dev_cache_val, int64_t num_nodes, int64_t feature_len, void *cpu_features, 
     int32_t *index_array, int num_gpus, int num_ways, int32_t num_sets, 
     int *success_lookups = nullptr, int *keys_found = nullptr)
 {
@@ -142,7 +141,7 @@ __global__ void static_test_lookup_features_kernel(void **dev_cache, int **dev_c
         int devId = key_to_gpu_index(nodeId, num_sets, num_gpus);
         int setId = key_to_set_index(nodeId, num_sets, num_gpus);
         int *cache_keys = dev_cache_key[devId];
-        int *cache_vals = dev_cache_val[devId];
+        ull *cache_vals = dev_cache_val[devId];
 
         int index, key = -1, mask, matched_lane, iter;
         // Not success, retry with new location
@@ -163,9 +162,9 @@ __global__ void static_test_lookup_features_kernel(void **dev_cache, int **dev_c
                 atomicAdd(keys_found, 1);
             }
             index = matched_lane + iter / DWARP_SIZE * DWARP_SIZE + setId * num_ways;
-            int64_t value = cache_vals[index];
+            ull value = cache_vals[index];
             float *cache = (float*)dev_cache[value_to_gpu_index(value, num_sets, num_ways)];
-            int offset = value_to_offset(value, num_sets, num_ways);
+            ull offset = value_to_offset(value, num_sets, num_ways);
             float *dev_features  = ((float *)cache + offset * feature_len);
             float *host_features = ((float *)cpu_features + nodeId * feature_len);
             int match = 1;
@@ -183,8 +182,8 @@ __global__ void static_test_lookup_features_kernel(void **dev_cache, int **dev_c
     }
 }
 
-__global__ void static_retrieve_kernel(int **dev_cache_key, int **dev_cache_vals, 
-    int *cache_index, int64_t num_nodes, int32_t *node_arr, int num_gpus,
+__global__ void static_retrieve_kernel(int **dev_cache_key, ull **dev_cache_vals, 
+    int64_t *cache_index, int64_t num_nodes, int32_t *node_arr, int num_gpus,
     int num_ways, int32_t num_sets, int dyn_flags, 
     ull *misses = nullptr, ull *accesses = nullptr, ull *inserts = nullptr) {
     // Split into tiles
@@ -200,26 +199,31 @@ __global__ void static_retrieve_kernel(int **dev_cache_key, int **dev_cache_vals
 
     // Go through node list
     for(int i = workId; i < num_nodes; i += numWorkers) {
-        int64_t nodeId = node_arr[i];
+        int32_t nodeId = node_arr[i];
         // Get details of set to insert into
         int devId = key_to_gpu_index(nodeId, num_sets, num_gpus);
         int setId = key_to_set_index(nodeId, num_sets, num_gpus);
         int *cache_keys = dev_cache_key[devId];
-        int *cache_vals = dev_cache_vals[devId];
+        int64_t *cache_vals = (int64_t*)dev_cache_vals[devId];
         cache_index[i] = -1;
 
-        int index, key, mask, matched_lane, iter;
+        int index, mask, matched_lane, iter;
         // Lookup present keys in set
         for(iter = laneId; iter < num_ways; iter += threads_per_work) {
             index = iter + setId * num_ways;
-            key = cache_keys[index];
+            int32_t key = cache_keys[index];
             // Attempt to find slot with matching nodeId
             mask =  __ballot_sync(threadMask, key == nodeId);
             mask >>= (warpOffset * threads_per_work);
             matched_lane = __ffs(mask) - 1;
             if(matched_lane >= 0) {
-                if(laneId == matched_lane)
-                    cache_index[i] = cache_vals[index];
+                if(laneId == matched_lane) {
+                    int64_t val = cache_vals[index];
+                    //if(val == 0)
+                    //    printf("%d: Found node %d at index %d with value %ld\n", i, nodeId, index, val);
+                    cache_index[i] = val;
+                }
+                //__syncwarp(threadMask);
                 break;
             }
         }
@@ -227,9 +231,9 @@ __global__ void static_retrieve_kernel(int **dev_cache_key, int **dev_cache_vals
 }
 
 __global__ void static_transfer_kernel(void **dev_cache, int **dev_cache_key, 
-    int **dev_cache_vals, int *cache_index, int64_t num_nodes, int64_t feature_len, float *output_features,
-    float *cpu_features, int32_t *node_arr, int lru_counter, int num_gpus, int total_nodes,
-    int num_ways, int32_t num_sets, int dyn_flags, 
+    ull **dev_cache_vals, int64_t *cache_index, int64_t num_nodes, int64_t feature_len, 
+    float *output_features, float *cpu_features, int32_t *node_arr, int lru_counter, 
+    int num_gpus, int total_nodes, int num_ways, int32_t num_sets, int dyn_flags, 
     ull *misses = nullptr, ull *accesses = nullptr, ull *inserts = nullptr) {
     
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
@@ -240,7 +244,7 @@ __global__ void static_transfer_kernel(void **dev_cache, int **dev_cache_key,
     for(int i = warpId; i < num_nodes; i += numWarps) {
         __syncwarp();
         int64_t nodeId = node_arr[i];
-        int index = cache_index[i];
+        int64_t index = cache_index[i];
         // Not in cache, manual copy
         if(index < 0) {
             // If we have extra space on both sides, we can use optimized padded copy
