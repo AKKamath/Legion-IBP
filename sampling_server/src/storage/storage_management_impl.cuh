@@ -136,6 +136,29 @@ void mmap_features_read(std::string &features_file, float* features){
         temp = *buf;
         features[n_idx++] = temp;
         buf++;
+/*        printf("%f ", features[n_idx-1]);
+        if(n_idx > 100){
+          fflush(stdout);
+          abort();
+        }*/
+    }
+    close(fd);
+    return;
+}
+
+void mmap_features_rep_read(std::string &features_file, float* features, int64_t num_feats){
+    int64_t n_idx = 0;
+    int32_t fd = open(features_file.c_str(), O_RDONLY);
+    if(fd == -1){
+        std::cout<<"cannout open file: "<<features_file<<"\n";
+    }
+    int64_t buf_len = lseek(fd, 0, SEEK_END);
+    const float *buf = (float *)mmap(NULL, buf_len, PROT_READ, MAP_PRIVATE, fd, 0);
+    const int64_t num_feats_file = buf_len/sizeof(float);
+    std::cout<<"Opened file "<<features_file<<" found "<< num_feats_file <<" features; copying to " << num_feats << " features\n";
+    fflush(stdout);
+    for(int64_t i = 0; i < num_feats; ++i) {
+      features[i] = buf[i % num_feats_file];
     }
     close(fd);
     return;
@@ -155,6 +178,22 @@ void mmap_labels_read(std::string &labels_file, std::vector<int32_t>& labels){
         temp = *buf;
         labels[n_idx++] = temp;
         buf++;
+    }
+    close(fd);
+    return;
+}
+
+void mmap_labels_rep_read(std::string &labels_file, std::vector<int32_t>& labels, int64_t num_labels){
+    int64_t n_idx = 0;
+    int32_t fd = open(labels_file.c_str(), O_RDONLY);
+    if(fd == -1){
+        std::cout<<"cannout open file: "<<labels_file<<"\n";
+    }
+    int64_t buf_len = lseek(fd, 0, SEEK_END);
+    const int32_t *buf = (int32_t *)mmap(NULL, buf_len, PROT_READ, MAP_PRIVATE, fd, 0);
+    const int64_t num_labels_file = buf_len/sizeof(float);
+    for(int64_t i = 0; i < num_labels; ++i) {
+      labels[i] = buf[i % num_labels_file];
     }
     close(fd);
     return;

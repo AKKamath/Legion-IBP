@@ -51,6 +51,7 @@ private:
     ull **dev_cache_offset;
     // Other relevant params
     int32_t num_gpus;
+    int32_t dev_start;
     int32_t feature_len;
     int32_t chunk_size;
     int64_t cache_capacity;
@@ -59,5 +60,7 @@ private:
     DYN_FLAGS flags;
     int32_t *comp_mask;
     int32_t *comp_bitval;
+    int32_t *comp_bitmask;
+    int *maxShmem;
 };
 #endif //STATICCACHE_H

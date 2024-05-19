@@ -32,10 +32,14 @@
     { a; cudaCheckError(); }
 
 enum DYN_FLAGS : int {
-  DYN_ENABLE = (1<<0),
-  DYN_SHADOW = (1<<1),
-  DYN_PROXIM = (1<<2),
-  DYN_COMP   = (1<<3),
+  DYN_ENABLE   = (1<<0),
+  DYN_SHADOW   = (1<<1),
+  DYN_PROXIM   = (1<<2),
+  DYN_COMP     = (1<<3),
+  DYN_COMP_CPU = (1<<4),
+  DYN_OPT      = (1<<5),
+  DYN_UNOPT    = (1<<6),
+  DYN_COMP_TEST= (1<<7),
 };
 
 typedef int LRU;
@@ -130,6 +134,9 @@ __inline__ __device__ int32_t warpInclusiveScanSync(unsigned mask, int32_t val)
 {
     for (int offset = 1; offset < DWARP_SIZE; offset <<= 1) {
         val += __shfl_up_sync(mask, val, offset);
+        // Needed because non-offset elements just add themselves
+        if(threadIdx.x % DWARP_SIZE < offset)
+            val /= 2;
     }
     return val;
 }

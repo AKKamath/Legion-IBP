@@ -1,3 +1,4 @@
+/*
 #include "dyn_cache.cuh"
 #include "dyn_cache_kernel.cuh"
 
@@ -148,4 +149,4 @@ void DynamicCache::transfer(int32_t *nodeIds, int64_t num_nodes,
         dev_cache_storage, dev_cache_key, dev_cache_lru, node_index, num_nodes, feature_len, 
         output_buffer, input_feats, nodeIds, lru_counter, num_gpus, total_nodes, 
         num_ways, num_sets, flags, misses, lookups, inserts);
-}
+}*/

@@ -63,6 +63,8 @@ void StorageManagement::ReadMetaFIle(BuildInfo* info){
         iss >> epoch_;
         std::cout<<"Train epoch:        "<<epoch_<<"\n";
         info->epoch = epoch_;
+        iss >> dataset_feat_path_;
+        std::cout<<"Feature path:       "<<dataset_feat_path_<<"\n";
     }else{
         iss >> dataset_path_;
         std::cout<<"Dataset path:       "<<dataset_path_<<"\n";
@@ -158,18 +160,35 @@ void StorageManagement::LoadFeature(BuildInfo* info){
     int32_t* partition_index = (int32_t*)malloc(int64_t(node_num) * sizeof(int32_t));
     float* host_float_feature;
 
+    std::cout<<"Starting Reading Files\n";
+    fflush(stdout);
     mmap_trainingset_read(training_path, training_ids);
     mmap_trainingset_read(validation_path, validation_ids);
     mmap_trainingset_read(testing_path, testing_ids);
+    std::cout<<"Finish Reading IDs\n";
+    fflush(stdout);
     if(in_memory_mode_){
         cudaHostAlloc(&host_float_feature, int64_t(int64_t(int64_t(node_num) * nf) * sizeof(float)), cudaHostAllocMapped);
-        mmap_features_read(features_path, host_float_feature);
+        if(dataset_feat_path_ != "") {
+            features_path = dataset_feat_path_ + "features";
+            mmap_features_rep_read(features_path, host_float_feature, int64_t(int64_t(node_num) * int64_t(nf)));
+        }
+        else
+            mmap_features_read(features_path, host_float_feature);
     }
-    mmap_labels_read(labels_path, all_labels);
+    std::cout<<"Finish Reading features\n";
+    fflush(stdout);
+    if(dataset_feat_path_ != "") {
+        labels_path = dataset_feat_path_ + "labels";
+        mmap_labels_rep_read(labels_path, all_labels, int64_t(node_num));
+    }
+    else
+        mmap_labels_read(labels_path, all_labels);
 
     int32_t fdret = mmap_partition_read(partition_path, partition_index);
 
     std::cout<<"Finish Reading All Files\n";
+    fflush(stdout);
     // partition nodes
 
     if(info->dyn_cache & DYN_PROXIM) {
@@ -210,6 +229,7 @@ void StorageManagement::LoadFeature(BuildInfo* info){
         }
     }
     std::cout<<"training set count "<<trainingset_count<<"\n";
+    fflush(stdout);
 
     for(int32_t i = 0; i < validation_set_num_; i++){
         int32_t tid = validation_ids[i];

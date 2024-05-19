@@ -27,6 +27,10 @@ NVCXXFLAGS := -lnvcomp -std=c++17 -arch=sm_70 -Xcompiler -Wall \
 			  -I $(SRC_DIR)/engine \
 			  -I $(SRC_DIR)/storage \
 			  -I $(SRC_DIR)/include/hashmap \
+			  -I $(ROOT)/../../ndzip/include \
+			  -L $(ROOT)/../../ndzip/build/ \
+			  -lndzip-cuda \
+			  -lndzip \
 			  -g
 
 

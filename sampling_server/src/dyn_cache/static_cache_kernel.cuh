@@ -245,8 +245,16 @@ __global__ void static_transfer_kernel(void **dev_cache, int **dev_cache_key,
         __syncwarp();
         int64_t nodeId = node_arr[i];
         int64_t index = cache_index[i];
+        if(dyn_flags & DYN_OPT) {
+            // [FAKE] Optimal caching. Always hits in cache
+            int offset = 1;
+            memcpy_warp_isspace(&output_features[i * feature_len], &((float*)dev_cache[0])[offset * feature_len], feature_len);
+        } else if(dyn_flags & DYN_UNOPT) {
+            // [FAKE] Unoptimized caching. Always misses in cache
+            memcpy_warp_isspace(&output_features[i * feature_len], &cpu_features[nodeId * feature_len], feature_len);
+        }
         // Not in cache, manual copy
-        if(index < 0) {
+        else if(index < 0) {
             // If we have extra space on both sides, we can use optimized padded copy
             memcpy_warp_isspace(&output_features[i * feature_len], 
                                 &cpu_features[nodeId * feature_len], feature_len);

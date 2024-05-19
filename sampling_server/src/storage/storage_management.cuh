@@ -56,6 +56,7 @@ private:
   int32_t num_queues_per_ssd_;
   int32_t cpu_cache_capacity_;//for Helios
   int32_t gpu_cache_capacity_;//for Helios
+  std::string dataset_feat_path_;
   
   GraphStorage* graph_;
   FeatureStorage* feature_;
