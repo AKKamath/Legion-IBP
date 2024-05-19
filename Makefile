@@ -32,12 +32,15 @@ graphsage: init clean
 		--epoch ${EPOCHS} > ${RESULTS}/${DATASET}/training${POSTFIX}.log
 
 extract_%:
-	python scripts/extract_results.py ${RESULTS}/$*
+	python scripts/extract_results.py ${RESULTS}/$* "unopt base mod comp compcpu opt" > ${RESULTS}/$*.log
 
-%_all:
+run_%_all:
 	$(MAKE) run_$*_comp
-	$(MAKE) run_$*
+	$(MAKE) run_$*_compcpu
+	$(MAKE) run_$*_base
 	$(MAKE) run_$*_mod
+	$(MAKE) run_$*_opt
+	$(MAKE) run_$*_unopt
 	$(MAKE) extract_$*
 
 # Command to run with dynamic cache
@@ -54,6 +57,21 @@ extract_%:
 
 %_comp:
 	$(MAKE) $* DYN_CACHE=8 POSTFIX=_comp${POSTFIX}
+
+%_compcpu:
+	$(MAKE) $* DYN_CACHE=24 POSTFIX=_compcpu${POSTFIX}
+
+%_base:
+	$(MAKE) $* DYN_CACHE=0 POSTFIX=_base${POSTFIX}
+
+%_opt:
+	$(MAKE) $* DYN_CACHE=32 POSTFIX=_opt${POSTFIX}
+
+%_unopt:
+	$(MAKE) $* DYN_CACHE=64 POSTFIX=_unopt${POSTFIX}
+
+%_comptest:
+	$(MAKE) $* DYN_CACHE=128 POSTFIX=_comptest${POSTFIX} CACHE_SIZE=38000000 
 
 # Individual experiment commands
 run_paper100m:
@@ -72,10 +90,19 @@ run_reddit:
 	$(MAKE) graphsage DATASET=reddit FEAT_NUM=602 BATCH_SIZE=1024 CLASS_NUM=50
 
 run_pubmed:
-	$(MAKE) graphsage DATASET=pubmed FEAT_NUM=500 BATCH_SIZE=1024 CLASS_NUM=3 CACHE_SIZE=200000 EPOCHS=500
+	$(MAKE) graphsage DATASET=pubmed FEAT_NUM=500 BATCH_SIZE=2048 CLASS_NUM=3 CACHE_SIZE=200000 EPOCHS=500
 
 run_mag:
 	$(MAKE) graphsage DATASET=mag FEAT_NUM=368 CLASS_NUM=153
 
 run_citeseer:
 	$(MAKE) graphsage DATASET=citeseer FEAT_NUM=3703 CLASS_NUM=6 BATCH_SIZE=512 EPOCHS=100 CACHE_SIZE=3800000
+
+run_pubmed_ls:
+	$(MAKE) graphsage DATASET=pubmed_ls FEAT_NUM=500 CLASS_NUM=3
+
+run_citeseer_ls:
+	$(MAKE) graphsage DATASET=citeseer_ls FEAT_NUM=3703 CLASS_NUM=6 BATCH_SIZE=1024
+
+run_cora_ls:
+	$(MAKE) graphsage DATASET=cora_ls FEAT_NUM=8710 CLASS_NUM=70 BATCH_SIZE=1024
