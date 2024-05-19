@@ -38,6 +38,7 @@ def find_largest_fully_connected_group(G):
         
 def Run(args):
 
+    feat_dataset_file = ""
     if args.dataset_name == "products":
         path =  args.dataset_path + "/products/"
         vertices_num = 2449029
@@ -126,13 +127,40 @@ def Run(args):
         train_set_num = 1330
         valid_set_num = 333
         test_set_num = 1664
+    elif args.dataset_name == "pubmed_ls":
+        path = args.dataset_path + "/ukunion/"
+        vertices_num = 133633040
+        edges_num = 5507679822
+        features_dim = 500
+        train_set_num = 13363304
+        valid_set_num = 100000
+        test_set_num = 100000
+        feat_dataset_file = args.dataset_path + "/pubmed/"
+    elif args.dataset_name == "citeseer_ls":
+        path =  args.dataset_path + "/products/"
+        vertices_num = 2449029
+        edges_num = 123718280
+        features_dim = 3703
+        train_set_num = 196615
+        valid_set_num = 39323
+        test_set_num = 2213091
+        feat_dataset_file = args.dataset_path + "/citeseer/"
+    elif args.dataset_name == "cora_ls":
+        path =  args.dataset_path + "/products/"
+        vertices_num = 2449029
+        edges_num = 123718280
+        features_dim = 8710
+        train_set_num = 196615
+        valid_set_num = 39323
+        test_set_num = 2213091
+        feat_dataset_file = args.dataset_path + "/cora/"
     else:
         print("invalid dataset path")
         exit
     
 
     with open("meta_config","w") as file:
-        file.write("{} {} {} {} {} {} {} {} {} {}".format(path, args.train_batch_size, vertices_num, edges_num, features_dim, train_set_num, valid_set_num, test_set_num, args.cache_memory, args.epoch))
+        file.write("{} {} {} {} {} {} {} {} {} {} {}".format(path, args.train_batch_size, vertices_num, edges_num, features_dim, train_set_num, valid_set_num, test_set_num, args.cache_memory, args.epoch, feat_dataset_file))
 
     gpu_number = args.gpu_number
     
