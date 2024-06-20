@@ -352,54 +352,12 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     this->num_gpus = Kg;
     this->feature_len = feature_len;
     this->num_ways = ways;
-    this->num_sets = ((nodes_per_gpu * 10 + num_ways - 1) / num_ways) * num_gpus;
-    this->cache_capacity = num_sets * num_ways * num_gpus;
+    this->num_sets = ((nodes_per_gpu * 2 + num_ways - 1) / num_ways) * num_gpus;
+    this->cache_capacity = num_sets * num_ways;
     this->flags = flags;
     this->dev_start = dev_start;
 
-    std::cout << "Number of sets: " << num_sets << ", cache capacity: " << cache_capacity << "\n";
-
-    auto start = TIME_NOW;
-
-    // Allocate size of pointers
-    host_cache_storage = (void**)malloc(num_gpus * sizeof(void*));
-    ull **host_cache_offset_ptr = (ull**)malloc(num_gpus * sizeof(ull*));
-    int **host_cache_key_ptr = (int**)malloc(num_gpus * sizeof(int*));
-
-    // Allocate pointers for GPU
-    cudaMalloc(&dev_cache_storage, num_gpus * sizeof(void*));
-    cudaCheckError();
-    cudaMalloc(&dev_cache_offset, num_gpus * sizeof(ull*));
-    cudaCheckError();
-    cudaMalloc(&dev_cache_key, num_gpus * sizeof(int*));
-    cudaCheckError();
-
-    maxShmem = (int*)malloc(sizeof(int) * num_gpus);
-    for(int i = 0; i < num_gpus; i++) {
-        int device_id = i + dev_start;
-        cudaSetDevice(device_id);
-        cudaDeviceGetAttribute(&maxShmem[i], cudaDevAttrMaxSharedMemoryPerBlock, device_id);
-
-        // Allocate the actual cache
-        cudaMalloc(&host_cache_storage[i], nodes_per_gpu * feature_len * sizeof(float));
-        cudaMemset(host_cache_storage[i], 0, nodes_per_gpu * feature_len * sizeof(float));
-        cudaCheckError();
-        cudaMalloc(&host_cache_offset_ptr[i], num_sets / num_gpus * num_ways * sizeof(ull));
-        cudaCheckError();
-        cudaMalloc(&host_cache_key_ptr[i], num_sets / num_gpus * num_ways * sizeof(int));
-        cudaCheckError();
-        static_reset_cache_metadata<<<32, 512>>>(host_cache_key_ptr[i], host_cache_offset_ptr[i], num_sets / num_gpus * num_ways);
-        cudaCheckError();
-    }
-    // Transfer pointers to GPU
-    cudaMemcpy(dev_cache_storage, host_cache_storage, num_gpus * sizeof(void*), cudaMemcpyHostToDevice);
-    cudaCheckError();
-    cudaMemcpy(dev_cache_offset, host_cache_offset_ptr, num_gpus * sizeof(ull*), cudaMemcpyHostToDevice);
-    cudaCheckError();
-    cudaMemcpy(dev_cache_key, host_cache_key_ptr, num_gpus * sizeof(int*), cudaMemcpyHostToDevice);
-    cudaCheckError();
-    auto end = TIME_NOW;
-    std::cout << "Time taken to allocate data structures:" << (float)TIME_DIFF(start, end) / 1000.0 << " ms\n";
+    std::cout << "Precompression: Number of sets: " << num_sets << ", cache capacity: " << cache_capacity << "\n";
 
     //-------------- COMPRESSION CODE ----------
     if(flags & (DYN_COMP | DYN_COMP_CPU | DYN_COMP_TEST)) {
@@ -448,7 +406,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             (typecast_feats, index_array, nodes_per_gpu, feature_len, dev_num_bits);
         cudaDeviceSynchronize();
         cudaCheckError();
-        float max_comp = 0;
+        double max_comp = 0;
         printf("Num nodes: %ld\n", nodes_per_gpu);
         for(float threshold = 0.7; threshold <= 1.0; threshold += 0.05) {
             cudaMemset(mask, 0, feature_len * sizeof(int));
@@ -467,7 +425,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             check_feats<<<32, 512>>> (typecast_feats, index_array, nodes_per_gpu, feature_len, mask, vals, count_stuff);
             cudaMemcpy(host_count, count_stuff, sizeof(long long unsigned), cudaMemcpyDeviceToHost);
             cudaCheckError();
-            printf("Threshold %f: Single-pass non-strict counts: %llu (Total %ld, %.3f%%)\n", threshold, *host_count, 
+            printf("Threshold %f: Single-pass counts: %llu (Total %ld, %.3f%%)\n", threshold, *host_count, 
                 nodes_per_gpu * feature_len * 32, (double)*host_count * 100 / (nodes_per_gpu * feature_len * 32.0));
             // Store the mask/value for max compressed format
             if(*host_count > max_comp) {
@@ -477,8 +435,6 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
                 max_comp = *host_count;
             }
         }
-
-        //comp_decomp_with_single_manager((uint8_t *)typecast_feats, feature_len * 4, nodes_per_gpu);
         /*
         cudaMemset(dev_cluster, 0, nodes_per_gpu * sizeof(int32_t));
         cudaMemcpy(index_arr, index_array, nodes_per_gpu * sizeof(int), cudaMemcpyDeviceToHost);
@@ -510,7 +466,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             create_mask_many<<<50, 512>>> (masks, multivals, num_centroids, dev_centroids_count, typecast_feats, index_array, dev_cluster, feature_len, nodes_per_gpu, 0.9);
             cudaDeviceSynchronize();
             cudaCheckError();
-/*          if(i == 0) {
+            if(i == 0) {
                 cudaMemcpy(host_centroid_count, dev_centroids_count, num_centroids * sizeof(int), cudaMemcpyDeviceToHost);
                 printf("Before clustering\n");
                 for(int i = 0; i < num_centroids; ++i) {
@@ -572,8 +528,67 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         cudaFreeHost(host_centroid_count);
         printf("Finished compression preprocessing\n");
         fflush(stdout);
+
+        // Need to decide a reasonable cache size
+        // Cache size = feature capacity + hashmap capacity
+        // Feature capacity = feature_len * num_nodes
+        // Hashmap capacity = (key_size [32 bits] + value size [64 bits]) * num_nodes * 2
+        // Cache size = num_nodes * (feature_len + key_size * 2 + value_size * 2)
+        // Cache size = num_nodes * (feature_len + 6)
+        size_t cache_per_gpu = nodes_per_gpu * (feature_len + 6);
+        double est_comp = 1.0 - max_comp / (double)(nodes_per_gpu * feature_len * 32.0);
+        size_t comp_nodes_per_gpu = cache_per_gpu / (feature_len * est_comp + 6);
+        this->num_sets = ((comp_nodes_per_gpu * 2 + num_ways - 1) / num_ways) * num_gpus;
+        this->cache_capacity = num_sets * num_ways;
+        // Cache size = feature capacity + hashmap capacity
+        // Cache size - hashmap capacity = feature_len * num_nodes
+        // new_num_nodes = (cache size - hashmap capacity) / feature_len
+        nodes_per_gpu = (cache_per_gpu * num_gpus - this->cache_capacity * 3) / (feature_len * num_gpus);
+        std::cout << "Postcompression: Required " << cache_per_gpu << ", num sets: " << num_sets << ", cache capacity: " << cache_capacity;
+        std::cout << ", new nodes_per_gpu: " << nodes_per_gpu << "\n";
     }
     //------------------------------
+    auto start = TIME_NOW;
+    // Allocate size of pointers
+    host_cache_storage = (void**)malloc(num_gpus * sizeof(void*));
+    ull **host_cache_offset_ptr = (ull**)malloc(num_gpus * sizeof(ull*));
+    int **host_cache_key_ptr = (int**)malloc(num_gpus * sizeof(int*));
+
+    // Allocate pointers for GPU
+    cudaMalloc(&dev_cache_storage, num_gpus * sizeof(void*));
+    cudaCheckError();
+    cudaMalloc(&dev_cache_offset, num_gpus * sizeof(ull*));
+    cudaCheckError();
+    cudaMalloc(&dev_cache_key, num_gpus * sizeof(int*));
+    cudaCheckError();
+
+    maxShmem = (int*)malloc(sizeof(int) * num_gpus);
+    for(int i = 0; i < num_gpus; i++) {
+        int device_id = i + dev_start;
+        cudaSetDevice(device_id);
+        cudaDeviceGetAttribute(&maxShmem[i], cudaDevAttrMaxSharedMemoryPerBlock, device_id);
+
+        // Allocate the actual cache
+        cudaMalloc(&host_cache_storage[i], nodes_per_gpu * feature_len * sizeof(float));
+        cudaMemset(host_cache_storage[i], 0, nodes_per_gpu * feature_len * sizeof(float));
+        cudaCheckError();
+        cudaMalloc(&host_cache_offset_ptr[i], num_sets / num_gpus * num_ways * sizeof(ull));
+        cudaCheckError();
+        cudaMalloc(&host_cache_key_ptr[i], num_sets / num_gpus * num_ways * sizeof(int));
+        cudaCheckError();
+        static_reset_cache_metadata<<<32, 512>>>(host_cache_key_ptr[i], host_cache_offset_ptr[i], num_sets / num_gpus * num_ways);
+        cudaCheckError();
+    }
+    // Transfer pointers to GPU
+    cudaMemcpy(dev_cache_storage, host_cache_storage, num_gpus * sizeof(void*), cudaMemcpyHostToDevice);
+    cudaCheckError();
+    cudaMemcpy(dev_cache_offset, host_cache_offset_ptr, num_gpus * sizeof(ull*), cudaMemcpyHostToDevice);
+    cudaCheckError();
+    cudaMemcpy(dev_cache_key, host_cache_key_ptr, num_gpus * sizeof(int*), cudaMemcpyHostToDevice);
+    cudaCheckError();
+    auto end = TIME_NOW;
+    std::cout << "Time taken to allocate data structures:" << (float)TIME_DIFF(start, end) / 1000.0 << " ms\n";
+
 
     if(flags & DYN_COMP_TEST) {
         nodes_per_gpu = min(total_nodes, (int64_t)200000);
@@ -632,7 +647,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         }
         cudaCheckError();
 
-        size_t * device_compressed_bytes;
+        size_t *device_compressed_bytes;
         cudaMalloc(&device_compressed_bytes, sizeof(size_t) * batch_size);
         cudaCheckError();
         size_t *host_compressed_bytes;
@@ -685,9 +700,10 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         cudaDeviceSynchronize();
         cudaCheckError();
         auto decomp_end = TIME_NOW;
-        printf("%s: Time taken to decompress: %f ms. Throughput: %f MB/s\n", "ndzip",
+        printf("%s: Time taken to decompress: %f ms. Throughput: %f MB/s; True thput: %f MB/s\n", "ndzip",
             (float)TIME_DIFF(decomp_start, decomp_end) / 1000.0,
-            (float)in_bytes / TIME_DIFF(decomp_start, decomp_end));
+            (float)in_bytes / TIME_DIFF(decomp_start, decomp_end),
+            (float)*(uint32_t*)host_compressed_bytes / TIME_DIFF(decomp_start, decomp_end));
         cudaMemcpy(host_output_data, device_output_data, in_bytes, cudaMemcpyDeviceToHost);
         cudaCheckError();
         for(int i = 0; i < in_bytes / sizeof(float); ++i) {
@@ -711,7 +727,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         compressed_cpu_features_kernel<<<64, 512>>>(comp_mask, comp_bitval, (int32_t*)cpu_features, (int32_t*)compressed_buffer, 
             nodes_per_gpu, feature_len, working_space, comp_bitmask, 4, nullptr, comp_size);
         cudaDeviceSynchronize();
-        printf("%s: Uncompressed bytes: %ld, compressed bytes: %d, ratio: %f\n",
+        printf("%s: Uncompressed bytes: %ld, compressed bytes: %llu, ratio: %f\n",
             "Us", in_bytes, *comp_size, (float)in_bytes / *comp_size);
         cudaCheckError();
         
@@ -722,7 +738,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             shmem_size = 0;
         cudaMemset(device_output_data, 0, in_bytes);
         decomp_start = TIME_NOW;
-        test_decompressed_features_kernel<<<64, 512, shmem_size>>>(
+        test_decompressed_features_kernel<<<64, 256, shmem_size>>>(
             comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data, 
             nodes_per_gpu, feature_len, comp_bitmask, shmem_size);
         cudaDeviceSynchronize();
@@ -730,9 +746,37 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         decomp_end = TIME_NOW;
         cudaMemcpy(host_output_data, device_output_data, in_bytes, cudaMemcpyDeviceToHost);
 
-        printf("%s: Time taken to decompress: %f ms. Throughput: %f MB/s\n", "Us",
+        printf("%s: Time taken to decompress: %f ms. Throughput: %f MB/s; True thput: %f MB/s\n", "Us",
             (float)TIME_DIFF(decomp_start, decomp_end) / 1000.0,
-            (float)in_bytes / TIME_DIFF(decomp_start, decomp_end));
+            (float)in_bytes / TIME_DIFF(decomp_start, decomp_end),
+            (float)*comp_size / TIME_DIFF(decomp_start, decomp_end));
+        cudaCheckError();
+        for(int i = 0; i < in_bytes / sizeof(float); ++i) {
+            if(((float*)cpu_features)[i] != ((float*)host_output_data)[i]) {
+                printf("Mismatch at %d: %x vs %x\n", i, ((int32_t*)cpu_features)[i], ((int32_t*)host_output_data)[i]);
+                break;
+            }
+        }
+        
+        // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
+        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t))
+            shmem_size = 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t);
+        else 
+            shmem_size = 256 / 32 * 96 * sizeof(int32_t);
+        cudaMemset(device_output_data, 0, in_bytes);
+        decomp_start = TIME_NOW;
+        test_decompressed_features_kernel2<<<64, 256, shmem_size>>>(
+            comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data, 
+            nodes_per_gpu, feature_len, comp_bitmask, shmem_size);
+        cudaDeviceSynchronize();
+        cudaCheckError();
+        decomp_end = TIME_NOW;
+        cudaMemcpy(host_output_data, device_output_data, in_bytes, cudaMemcpyDeviceToHost);
+
+        printf("%s: Time taken to decompress: %f ms. Throughput: %f MB/s; True thput: %f MB/s\n", "Us2",
+            (float)TIME_DIFF(decomp_start, decomp_end) / 1000.0,
+            (float)in_bytes / TIME_DIFF(decomp_start, decomp_end),
+            (float)*comp_size / TIME_DIFF(decomp_start, decomp_end));
         cudaCheckError();
         for(int i = 0; i < in_bytes / sizeof(float); ++i) {
             if(((float*)cpu_features)[i] != ((float*)host_output_data)[i]) {
@@ -744,7 +788,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         // Flat data copy
         cudaMemset(comp_bitmask, 0, (nodes_per_gpu + 31) / 32 * sizeof(int32_t));
         decomp_start = TIME_NOW;
-        decompressed_cpu_features_kernel<<<64, 512>>>(
+        decompressed_cpu_features_kernel<<<64, 256>>>(
             comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data, 
             nodes_per_gpu, feature_len, working_space, comp_bitmask);
         cudaDeviceSynchronize();
@@ -808,7 +852,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     if(flags & DYN_COMP_CPU) {
         cudaMalloc(&comp_bitmask, (total_nodes + 31) / 32 * sizeof(int32_t));
         cudaMemset(comp_bitmask, 0, (total_nodes + 31) / 32 * sizeof(int32_t));
-        //total_nodes = 5;
+        /*total_nodes = 5;*/
         //int32_t *comp_cpu_vals, *decomp_cpu_vals;
         //cudaMallocHost(&comp_cpu_vals, total_nodes * feature_len * sizeof(int32_t));
         //cudaMallocHost(&decomp_cpu_vals, total_nodes * feature_len * sizeof(int32_t));
@@ -816,12 +860,13 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
 
         int32_t *working_space;
         cudaMalloc(&working_space, (1 + 32 * 512 / DWARP_SIZE * feature_len) * sizeof(int32_t));
+        cudaMemset(working_space, 0, (1 + 32 * 512 / DWARP_SIZE * feature_len) * sizeof(int32_t));
         cudaCheckError();
         compressed_cpu_features_kernel<<<32, 512>>>(comp_mask, comp_bitval, (int32_t*)cpu_features, 
              (int32_t*)cpu_features, total_nodes, feature_len, working_space, 
              comp_bitmask, 4, &working_space[32 * 512 / DWARP_SIZE * feature_len]);
         //decompressed_cpu_features_kernel<<<32, 512>>>(comp_mask, comp_bitval, (int32_t*)comp_cpu_vals, 
-        //    decomp_cpu_vals, total_nodes, feature_len, working_space);
+        //    decomp_cpu_vals, total_nodes, feature_len, working_space, comp_bitmask);
         int32_t *host_comp_count;
         cudaMallocHost(&host_comp_count, sizeof(int32_t));
         cudaCheckError();
@@ -1010,24 +1055,38 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
     ull *misses, ull *lookups, ull *inserts)
 {
     int shmem_size;
-    // TODO: Do this by the executing GPU. Relevant for heterogeneous GPU machines
-    if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t))
-        shmem_size = 2 * feature_len * sizeof(int32_t);
-    else 
-        shmem_size = 0;
-    if(flags & DYN_COMP_CPU)
-        compress_cpu_transfer_kernel<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
+    if(flags & DYN_CPU_TEST2) {
+        // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
+        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + 512 / 32 * 96 * sizeof(int32_t))
+            shmem_size = 2 * feature_len * sizeof(int32_t) + 512 / 32 * 96 * sizeof(int32_t);
+        else 
+            shmem_size = 512 / 32 * 96 * sizeof(int32_t);
+        compress_cpu_transfer_kernel2<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
             node_index, num_nodes, feature_len, output_buffer, comp_bitmask, input_feats, 
             nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets, shmem_size,
             misses, lookups, inserts);
-    else if(flags & DYN_COMP)
-        compress_transfer_kernel<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
-            node_index, num_nodes, feature_len, output_buffer, 
-            input_feats, nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets, shmem_size,
-            misses, lookups, inserts);
-    else
-        static_transfer_kernel<<<32, 512, 0, stream>>>(
-            dev_cache_storage, dev_cache_key, dev_cache_offset, node_index, num_nodes, 
-            feature_len, output_buffer, input_feats, nodeIds, 0, num_gpus, total_nodes, 
-            num_ways, num_sets, flags, misses, lookups, inserts);
+    }
+    else {
+        // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
+        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t))
+            shmem_size = 2 * feature_len * sizeof(int32_t);
+        else 
+            shmem_size = 0;
+        if(flags & DYN_COMP_CPU)
+            compress_cpu_transfer_kernel<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
+                node_index, num_nodes, feature_len, output_buffer, comp_bitmask, input_feats, 
+                nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets, shmem_size,
+                misses, lookups, inserts);
+        else if(flags & DYN_COMP)
+            compress_transfer_kernel<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
+                node_index, num_nodes, feature_len, output_buffer, 
+                input_feats, nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets, shmem_size,
+                misses, lookups, inserts);
+        else
+            static_transfer_kernel<<<32, 512, 0, stream>>>(
+                dev_cache_storage, dev_cache_key, dev_cache_offset, node_index, num_nodes, 
+                feature_len, output_buffer, input_feats, nodeIds, 0, num_gpus, total_nodes, 
+                num_ways, num_sets, flags, misses, lookups, inserts);
+    }
+    
 }

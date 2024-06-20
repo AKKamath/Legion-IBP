@@ -33,7 +33,7 @@ __global__ void static_reset_cache_metadata(int *cache_keys, ull *cache_val, int
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
     for(int i = threadId; i < nodes; i += blockDim.x * gridDim.x) {
         cache_keys[i] = -1;
-        cache_val[i] = -1;
+        cache_val[i] = 0;
     }
 }
 
@@ -238,7 +238,6 @@ __global__ void static_transfer_kernel(void **dev_cache, int **dev_cache_key,
     
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
     int warpId = threadId / DWARP_SIZE;
-    int laneId = threadIdx.x % DWARP_SIZE;
     int numWarps = (blockDim.x * gridDim.x) / DWARP_SIZE;
     // Go through node list
     for(int i = warpId; i < num_nodes; i += numWarps) {

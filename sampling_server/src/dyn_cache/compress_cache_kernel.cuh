@@ -187,6 +187,230 @@ __inline__ __device__ void decompress_and_write(int32_t *dest, int32_t *src,
     }
 }
 
+__inline__ __device__ int read_one_iter(int32_t *cpu_src, int32_t *shm_meta, int32_t *shm_working, 
+    int min_elems, int max_elems, int feature_len, int bitmask_offset, int start_offset = 0) 
+{
+    int threadId = threadIdx.x % DWARP_SIZE;
+    const int offset = ((GPU_CL_SIZE - (((uint64_t)(cpu_src + start_offset)) % GPU_CL_SIZE)) % GPU_CL_SIZE) / sizeof(int32_t);
+    const int onset  = ((GPU_CL_SIZE - (((uint64_t)min_elems * sizeof(int32_t)) % GPU_CL_SIZE)) % GPU_CL_SIZE) / sizeof(int32_t);
+
+    int sub_val = (offset + 7) / 8 * 8; // Round up to nearest multiple of 8
+    for(int k = threadId + (offset - sub_val); k < offset; k += DWARP_SIZE) {
+        int32_t *dest_element;
+        if(k + start_offset < bitmask_offset / sizeof(int32_t)) {
+            // ASSUMPTION: Shared memory working region size is 128B/32 elements
+            dest_element = (int32_t*)shm_meta + (k + start_offset) % 32;
+        } else {
+            // ASSUMPTION: Shared memory working region size is 256B/64 elements
+            dest_element = (int32_t*)shm_working + (k + start_offset - bitmask_offset / sizeof(int32_t)) % 64;
+        }
+        // Combined read, to improve PCIe util.
+        int32_t src_data = *((cpu_src + start_offset) + k);
+        // Selective write to GPU memory
+        if(k >= 0 && k < max_elems) {
+            *dest_element = src_data;
+            /*unsigned int mask = __activemask();
+            if(threadId == __ffs(mask) - 1) {
+                printf("1. Write %d bytes; num_threads %d; %p; min %d max %d\n", 
+                    (int)(__popc(mask) * sizeof(int32_t)), sub_val, 
+                    cpu_src + start_offset, min_elems, max_elems);
+            }*/
+        }
+    }
+    if(offset >= min_elems)
+        return start_offset + offset;
+    // Read can be completed with less than 32 threads if min_elems is small
+    if(max_elems - offset <= 24) {
+        int add_val = (min_elems - offset + 7) / 8 * 8; // Round up to nearest multiple of 8
+        for(int k = threadId + offset; k < offset + add_val; k += DWARP_SIZE) {
+            int32_t *dest_element;
+            if(k + start_offset < bitmask_offset / sizeof(int32_t)) {
+                // ASSUMPTION: Shared memory working region size is 128B/32 elements
+                dest_element = (int32_t*)shm_meta + (k + start_offset) % 32;
+            } else {
+                // ASSUMPTION: Shared memory working region size is 256B/64 elements
+                dest_element = (int32_t*)shm_working + (k + start_offset - bitmask_offset / sizeof(int32_t)) % 64;
+            }
+            // Combined read, to improve PCIe util.
+            int32_t src_data = *((cpu_src + start_offset) + k);
+            // Selective write to GPU memory
+            if(k >= 0 && k < max_elems) {
+                *dest_element = src_data;
+                /*unsigned int mask = __activemask();
+                if(threadId == __ffs(mask) - 1) {
+                    printf("1b. Write %d bytes; num_threads %d; %p; min %d max %d\n", 
+                        (int)(__popc(mask) * sizeof(int32_t)), add_val, 
+                        cpu_src + start_offset, min_elems, max_elems);
+                }*/
+            }
+        }
+        __syncwarp();
+        return start_offset + min(max_elems, offset + add_val);
+    }
+    int k;
+    for(k = threadId + offset; k < min_elems + offset + onset; k += DWARP_SIZE) {
+        __syncwarp();
+        int32_t *dest_element;
+        if(k + start_offset < bitmask_offset / sizeof(int32_t)) {
+            // ASSUMPTION: Shared memory working region size is 128B/32 elements
+            dest_element = (int32_t*)shm_meta + (k + start_offset) % 32;
+        } else {
+            // ASSUMPTION: Shared memory working region size is 256B/64 elements
+            dest_element = (int32_t*)shm_working + (k + start_offset - bitmask_offset / sizeof(int32_t)) % 64;
+        }
+        // Combined read, to improve PCIe util.
+        int32_t src_data = *((cpu_src + start_offset) + k);
+        // Selective write to GPU memory
+        if(k < max_elems) {
+            *dest_element = src_data;
+            /*unsigned int mask = __activemask();
+            if(threadId == __ffs(mask) - 1) {
+                printf("2. Write %d bytes; offset %d; min+onset %d; %p; min %d max %d\n", 
+                (int)(__popc(mask) * sizeof(int32_t)), offset, min_elems + onset, 
+                cpu_src + start_offset, min_elems, max_elems);
+            }*/
+        }
+    }
+    __syncwarp();
+
+    return start_offset + min(max_elems, min_elems + offset + onset);
+}
+
+// Function to decompress and write features
+__inline__ __device__ void decompress_and_write_cpu(int32_t *dest, int32_t *src, 
+    int32_t *shm_mask, int32_t *shm_bitval, int32_t feature_len, int32_t *workspace,
+    int32_t chunk_size = 4) {
+    int laneId = threadIdx.x % DWARP_SIZE;
+    int64_t bitmask_offset = BITS_TO_BYTES((feature_len * sizeof(float) + chunk_size - 1) / chunk_size);
+    // 4-byte align
+    bitmask_offset = (bitmask_offset + 3) / 4 * 4;
+
+    // Shared memory buffers
+    int32_t *metadata = workspace;
+    int32_t *working_data = workspace + 32;
+    int metadata_offset = 0, working_offset = 0;
+    // Read up to 64elems/256B from src buffer
+    int offset = read_one_iter(src, metadata, working_data, 1, 
+                               min(32, feature_len), feature_len, bitmask_offset);
+
+    if(offset > bitmask_offset / sizeof(int32_t)) {
+        metadata_offset = bitmask_offset / sizeof(int32_t);
+        working_offset = offset;
+        /*if(laneId == 0)
+        printf("Offset: %d, Metadata offset = %d, working offset = %d\n", 
+            offset, metadata_offset, working_offset);*/
+    } else {
+        metadata_offset = offset;
+        // Only read metadata so far, so read working data now
+        working_offset = bitmask_offset / sizeof(int32_t);
+        working_offset = read_one_iter(src, metadata, working_data, min(32, feature_len), 
+                                min(64, feature_len), feature_len, bitmask_offset, working_offset);
+        /*if(laneId == 0)
+        printf("Offset: %d, Metadata offset = %d, working offset = %d\n", 
+            offset, metadata_offset, working_offset);*/
+    }
+
+    // TODO - Implement this:
+    // * Use shared memory metadata/workspace instead of cpu src
+    // * Use ballot to keep reading iters as needed
+
+    // Code to decompress
+    int32_t bitshift = 0;
+    for(int i = laneId; i < (feature_len + DWARP_SIZE - 1) / DWARP_SIZE * DWARP_SIZE; i += DWARP_SIZE) {
+        int read_metadata = false;
+        // This thread needs next set of metadata
+        if(i / 32 >= metadata_offset && i < feature_len) {
+            read_metadata = true;
+        }
+        read_metadata = __ballot_sync(FULL_MASK, read_metadata);
+        if(read_metadata) {
+            // Read next 128B of metadata
+            metadata_offset = read_one_iter(src, metadata, working_data, 
+                min(32UL, bitmask_offset / sizeof(int32_t) - metadata_offset), 
+                min(32UL, bitmask_offset / sizeof(int32_t) - metadata_offset), feature_len, bitmask_offset, metadata_offset);
+            /*if(laneId == 0)
+                printf("2. [Added] Metadata offset = %d, working offset = %d\n", 
+                    metadata_offset, working_offset);*/
+        }
+        int32_t cur_bitshift = 0;
+        bool compressed_feat = false;
+        if(i < feature_len) {
+            // Check if this feature is in compressed or uncompressed format
+            // i / 32 converts bits to words, % 32 because shmem buffer holds 32 words
+            int32_t word_offset = (i / 32) % 32;
+            int32_t bit_offset =  i % 32;
+            compressed_feat = (metadata[word_offset] & (1 << bit_offset));
+            // Default 32 bits per thread, less if compressed
+            cur_bitshift = 32;
+            if(compressed_feat) {
+                cur_bitshift -= __popc(shm_mask[i]);
+            }
+        }
+        // Perform scan to obtain starting bit for this thread
+        bitshift += warpExclusiveScanSync(FULL_MASK, cur_bitshift);
+        int read_data = false;
+        // This thread needs next set of working data
+        if((bitshift + cur_bitshift) / 32 >= working_offset - bitmask_offset / sizeof(int32_t) && i < feature_len) {
+            read_data = true;
+        }
+        read_data = __ballot_sync(FULL_MASK, read_data);
+        if(read_data) {
+            // Read next 128B of metadata
+            working_offset = read_one_iter(src, metadata, working_data, 
+                min(32, feature_len - working_offset), 
+                min(64, feature_len - working_offset), feature_len, bitmask_offset, working_offset);
+            /*if(laneId == 0)
+                printf("3. Metadata offset = %d, [Added] working offset = %d\n", 
+                    metadata_offset, working_offset);*/
+        }
+        
+        // Now decompress
+        if(i < feature_len) {
+            int32_t num_bits = cur_bitshift;
+            int32_t temp_read_size;
+            int32_t local_mask = shm_mask[i];
+            int32_t temp_dest = 0;
+            // Start from bitshift and insert current compressed feature
+            if(compressed_feat) {
+                temp_dest = shm_bitval[i];
+                temp_read_size = min(num_bits, __clz(local_mask));
+            } else {
+                temp_dest = 0;
+                temp_read_size = num_bits;
+            }
+
+            int32_t fin_read_bits = 0;
+            // Number of compressed bits being inserted
+            while(num_bits > 0) {
+                // Perform actual read
+                // bitshift / 32 converts bits to words, % 64 because shmem buffer holds 64 words
+                int32_t word_offset = (bitshift / 32) % 64;
+                int32_t bit_offset = bitshift % 32;
+                int32_t read_bits = min(temp_read_size, 32 - bit_offset);
+                temp_dest |= ((working_data[word_offset] << bit_offset) & (((1L << read_bits) - 1L) << (32L - read_bits))) >> fin_read_bits;
+                fin_read_bits += read_bits;
+                num_bits -= read_bits;
+                bitshift += read_bits;
+                // If the feature was compressed, do some bitshifts before next iteration
+                if(compressed_feat) {
+                    // Shift by inserted bits
+                    local_mask <<= read_bits;
+                    // Shift by masked bits
+                    int32_t shift = __clz(~local_mask);
+                    local_mask <<= shift;
+                    fin_read_bits += shift;
+                    // Get new insert size
+                    temp_read_size = min(__clz(local_mask), num_bits);
+                } else
+                    temp_read_size = num_bits;
+            }
+            dest[i] = temp_dest;
+        }
+        // Get starting bitshift from previous iteration
+        bitshift = __shfl_sync(FULL_MASK, bitshift, DWARP_SIZE - 1);
+    }
+}
+
 __global__ void check_compress_size_kernel(int32_t *input_feats, int32_t *index_array, int64_t *compressed_size,
     int32_t *mask, int32_t *values, int64_t num_feats, int64_t feature_len, int64_t chunk_size = 4)
 {
@@ -392,6 +616,48 @@ __global__ void test_decompressed_features_kernel(
     }
 }
 
+__global__ void test_decompressed_features_kernel2(
+    const int32_t *mask, const int32_t *bitval, const int32_t *input_features, int32_t *output_features, 
+    int64_t total_nodes, int64_t feature_len, const int32_t *bitmask, size_t shmem_size,
+    int chunk_size = 4)
+{
+    extern __shared__ int32_t shared_mem[];
+    int32_t *shm_mask = shared_mem, *shm_bitval = &shared_mem[feature_len];
+    int32_t *workspace;
+    if(shmem_size >= feature_len * sizeof(int32_t) * 2) {
+        for(int i = threadIdx.x; i < feature_len; i += blockDim.x) {
+            shm_mask[i] = mask[i];
+            shm_bitval[i] = bitval[i];
+        }
+        // 32 elements for metadata, 64 elements for working data
+        // = 96 elements per warp
+        workspace = &shared_mem[2 * feature_len + (threadIdx.x / DWARP_SIZE) * 96];
+    } else {
+        shm_mask = (int32_t *)mask;
+        shm_bitval = (int32_t *)bitval;
+        // 32 elements for metadata, 64 elements for working data
+        // = 96 elements per warp
+        workspace = &shared_mem[(threadIdx.x / DWARP_SIZE) * 96];
+    }
+    __syncthreads();
+
+    int threadId = threadIdx.x + blockIdx.x * blockDim.x;
+    int warpId = threadId / DWARP_SIZE;
+    int laneId = threadIdx.x % DWARP_SIZE;
+    int numWarps = (blockDim.x * gridDim.x) / DWARP_SIZE;
+    for(int i = warpId; i < total_nodes; i += numWarps) {
+        // Compressed insert
+        if(bitmask[i / 32] & (1 << (i % 32))){
+            decompress_and_write_cpu(&output_features[i * feature_len], 
+                (int32_t *)&input_features[i * feature_len], 
+                shm_mask, shm_bitval, feature_len, workspace, chunk_size);
+        } else {
+            memcpy_warp((void *)&output_features[i * feature_len], 
+                        (void *)&input_features[i * feature_len], feature_len);
+        }
+    }
+}
+
 // [TEST] Check if features properly copied into cache
 __global__ void compressed_test_lookup_features_kernel(
     void **dev_cache, int **dev_cache_key, ull **dev_cache_val, int32_t *dev_mask, 
@@ -590,6 +856,74 @@ __global__ void compress_cpu_transfer_kernel(void **dev_cache, int64_t *cache_in
                 decompress_and_write((int32_t*)&output_features[i * feature_len], 
                     (int32_t*)&cpu_features[nodeId * feature_len], 
                     shm_mask, shm_bitval, feature_len);
+            } else {
+                memcpy_warp(&output_features[i * feature_len], 
+                    &cpu_features[nodeId * feature_len], feature_len);
+            }
+        } else {
+            int64_t gpu_id, compressed;
+            int64_t offset = deconstruct_hash_ptr(index, gpu_id, compressed);
+            if(!compressed){
+                memcpy_warp(&output_features[i * feature_len], 
+                    &((char*)dev_cache[gpu_id])[offset], feature_len);
+            } else {
+                decompress_and_write((int32_t*)&output_features[i * feature_len], 
+                    (int32_t*)&((char*)dev_cache[gpu_id])[offset], 
+                    shm_mask, shm_bitval, feature_len);
+            }
+        }
+    }
+}
+
+__global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_index, 
+    int64_t num_nodes, int64_t feature_len, float *output_features, int32_t *bitmask,
+    float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval, 
+    int32_t total_nodes, int num_ways, int32_t num_sets, int shmem,
+    ull *misses, ull *lookups, ull *inserts) {
+    
+    extern __shared__ int32_t shared_mem[];
+    int32_t *shm_mask = shared_mem, *shm_bitval = &shared_mem[feature_len];
+    int32_t *workspace;
+    if(shmem >= feature_len * sizeof(int32_t) * 2) {
+        for(int i = threadIdx.x; i < feature_len; i += blockDim.x) {
+            shm_mask[i] = dev_mask[i];
+            shm_bitval[i] = dev_bitval[i];
+        }
+        // 32 elements for metadata, 64 elements for working data
+        // = 96 elements per warp
+        workspace = &shared_mem[2 * feature_len + (threadIdx.x / DWARP_SIZE) * 96];
+    } else {
+        shm_mask = dev_mask;
+        shm_bitval = dev_bitval;
+        // 32 elements for metadata, 64 elements for working data
+        // = 96 elements per warp
+        workspace = &shared_mem[(threadIdx.x / DWARP_SIZE) * 96];
+    }
+    __syncthreads();
+
+    int threadId = threadIdx.x + blockIdx.x * blockDim.x;
+    int warpId = threadId / DWARP_SIZE;
+    int laneId = threadIdx.x % DWARP_SIZE;
+    int numWarps = (blockDim.x * gridDim.x) / DWARP_SIZE;
+    // Go through node list
+    for(int i = warpId; i < num_nodes; i += numWarps) {
+        __syncwarp();
+        int64_t index = cache_index[i];
+        int32_t nodeId = node_arr[i];
+#ifdef MONITOR_DEEP
+        if(laneId == 0)
+            atomicAdd(lookups, 1);
+#endif
+        // Not in cache, manual copy
+        if(index < 0) {
+#ifdef MONITOR_DEEP
+            if(laneId == 0)
+                atomicAdd(misses, 1);
+#endif
+            if(bitmask[i / 32] & (1 << (i % 32))) {
+                decompress_and_write_cpu((int32_t*)&output_features[i * feature_len], 
+                    (int32_t*)&cpu_features[nodeId * feature_len], 
+                    shm_mask, shm_bitval, feature_len, workspace);
             } else {
                 memcpy_warp(&output_features[i * feature_len], 
                     &cpu_features[nodeId * feature_len], feature_len);
