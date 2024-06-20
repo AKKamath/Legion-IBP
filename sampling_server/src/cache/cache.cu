@@ -572,6 +572,7 @@ void UnifiedCache::FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStor
             cache_controller_[i * Kg_ + j]->Insert(QT_[i], QF_[i], cache_expand, Kg_);
         }
     }
+    size_t *cache_size = (size_t*)malloc(sizeof(size_t) * Kc_ * Kg_);
     for(int32_t i = 0; i < Kc_; i++){
         for(int32_t j = 0; j < Kg_; j++){
             int32_t dev_id = i * Kg_ + j;
@@ -579,6 +580,7 @@ void UnifiedCache::FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStor
             size_t free, total;
             cudaMemGetInfo( &free, &total );
             std::cout << "GPU " << dev_id << " memory: free=" << free << ", total=" << total << std::endl;
+            cache_size[i * Kg_ + j] = free;
         }
     }
 
@@ -633,6 +635,7 @@ void UnifiedCache::FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStor
         graph->GraphCache(QT_[i], i, Kg_, edge_capacity_[i]);
     }
     cudaDeviceSynchronize();
+    size_t total_cache_size = 0;
     for(int32_t i = 0; i < Kc_; i++){
         for(int32_t j = 0; j < Kg_; j++){
             int32_t dev_id = i * Kg_ + j;
@@ -640,9 +643,13 @@ void UnifiedCache::FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStor
             size_t free, total;
             cudaMemGetInfo( &free, &total );
             std::cout << "GPU " << dev_id << " memory: free=" << free << ", total=" << total << std::endl;
+            cache_size[i * Kg_ + j] -= free;
+            std::cout << "GPU " << dev_id << " cache size =" << cache_size[i * Kg_ + j] << std::endl;
+            total_cache_size += cache_size[i * Kg_ + j];
         }
     }
     std::cout<<"Finish load topology cache\n";
+    std::cout << "Total cache size = " << total_cache_size << std::endl;
 }
 
 int32_t UnifiedCache::NodeCapacity(int32_t dev_id){
