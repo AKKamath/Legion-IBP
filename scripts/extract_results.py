@@ -12,23 +12,56 @@ def extract_costs(file_path):
 
 # Example usage
 folder_path = sys.argv[1]
-workload = sys.argv[1].split('/')[-1]
-types = sys.argv[2].split()
+workloads = sys.argv[2].split()
+types = sys.argv[3].split()
 
 costs = {}
 avg = {}
 stddev = {}
 
-for i in types:
-    training_file = os.path.join(folder_path, 'training_' + i + '.log')
-    if(os.path.exists(training_file)):
-        costs[i] = extract_costs(training_file)
-        avg[i] = np.mean(costs[i])
-        stddev[i] = np.std(costs[i])
+for test in types:
+    costs[test] = {}
+    avg[test] = {}
+    stddev[test] = {}
 
-print("{:s}\tAvg\tStddev".format(workload))
+for test in types:
+    for workload in workloads:
+        training_file = os.path.join(folder_path + "/" + workload, 'training_' + test + '.log')
+        if(os.path.exists(training_file)):
+            costs[test][workload] = extract_costs(training_file)
+            avg[test][workload] = np.mean(costs[test][workload])
+            stddev[test][workload] = np.std(costs[test][workload])
+
+
+print("Avg time (s)", end="\t")
+for workload in workloads:
+    print("{:s}".format(workload), end='\t')
+print()
 for i in types:
-    if i in costs:
-        print("{:s}\t{:.4f}\t{:.4f}".format(i, avg[i], stddev[i]))
-    else:
-        print("{:s}\t\t".format(i))
+    print(i, end='\t')
+    for workload in workloads:
+        if i in costs:
+            if workload in costs[i]:
+                print("{:.4f}".format(avg[i][workload]), end='\t')
+            else:
+                print("NA", end="\t")
+        else:
+            print("NA", end="\t")
+    print()
+print()
+
+print("Stddev", end='\t')
+for workload in workloads:
+    print("{:s}".format(workload), end='\t')
+print()
+for i in types:
+    print(i, end='\t')
+    for workload in workloads:
+        if i in costs:
+            if workload in costs[i]:
+                print("{:.4f}".format(stddev[i][workload]), end='\t')
+            else:
+                print("NA", end="\t")
+        else:
+            print("NA", end="\t")
+    print()

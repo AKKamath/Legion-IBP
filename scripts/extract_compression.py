@@ -7,7 +7,7 @@ import glob
 RATIOS = {}
 THPUTS = {}
 def extract_ratio(file_path):
-    dataset = re.findall(r'/(.*)/sampling_comptest.log', file_path)[0]
+    dataset = re.findall(r'results/(.*)/sampling_comptest.log', file_path)[0]
     with open(file_path, 'r') as file:
         content = file.read()
         matches = re.findall(r'(.*): Uncompressed bytes: [0-9]+, compressed bytes: [0-9]+, ratio: ([0-9]+\.[0-9]+)', content)
@@ -17,7 +17,7 @@ def extract_ratio(file_path):
             RATIOS[match[0]][dataset] = float(match[1])
 
 def extract_thput(file_path):
-    dataset = re.findall(r'/(.*)/sampling_comptest.log', file_path)[0]
+    dataset = re.findall(r'results/(.*)/sampling_comptest.log', file_path)[0]
     with open(file_path, 'r') as file:
         content = file.read()
         matches = re.findall(r'(.*): Time taken to decompress: ([0-9]+\.[0-9]+) ms. Throughput: ([0-9]+\.[0-9]+) MB/s', content)
@@ -28,15 +28,16 @@ def extract_thput(file_path):
 
 # Example usage
 folder_path = sys.argv[1]
+datasets = sys.argv[2].split()
 
-for f in glob.glob(folder_path + '/*/sampling_comptest.log'):
-    extract_ratio(f)
-    extract_thput(f)
+for dataset in datasets:
+    extract_ratio(folder_path + '/' + dataset + '/sampling_comptest.log')
+    extract_thput(folder_path + '/' + dataset + '/sampling_comptest.log')
 
 
 print("Ratios", end='\t')
-first_key = list(RATIOS.keys())[0]
-datasets = RATIOS[first_key]
+#first_key = list(RATIOS.keys())[0]
+#datasets = RATIOS[first_key]
 for dataset in datasets:
     print("{:s}".format(dataset), end='\t')
 print()
@@ -52,7 +53,7 @@ for algo in RATIOS:
 print()
 
 print("Thput", end='\t')
-first_key = list(THPUTS.keys())[0]
+#first_key = list(THPUTS.keys())[0]
 for dataset in datasets:
     print("{:s}".format(dataset), end='\t')
 print()
