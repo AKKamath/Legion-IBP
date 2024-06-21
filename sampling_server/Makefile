@@ -92,8 +92,8 @@ $(CORE_BUILT_DIR)/src/engine/%.o:$(CORE_DIR)/engine/%.cu $(CORE_H) $(CORE_CUH)
 	@mkdir -p $(CORE_BUILT_DIR)/src/engine
 	$(NVCXX) $(NVCXXFLAGS) -c $< -o $@ -lrt
 
-$(CORE_BUILT_DIR)/src/dyn_cache/%.o:$(CORE_DIR)/dyn_cache/%.cu $(CORE_H) $(CORE_CUH)
-	@mkdir -p $(CORE_BUILT_DIR)/src/dyn_cache
+$(CORE_BUILT_DIR)/src/comp_cache/%.o:$(CORE_DIR)/comp_cache/%.cu $(CORE_H) $(CORE_CUH)
+	@mkdir -p $(CORE_BUILT_DIR)/src/comp_cache
 	$(NVCXX) $(NVCXXFLAGS) -c $< -o $@ -lrt
 
 core: $(CORE_OBJ)
