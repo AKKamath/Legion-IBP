@@ -362,7 +362,6 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     //-------------- COMPRESSION CODE ----------
     if(flags & (DYN_COMP | DYN_COMP_CPU | DYN_COMP_TEST)) {
         chunk_size = 4;
-        unsigned num_centroids = 100;//nodes_per_gpu * 0.01;
         // Init data structures for future use
         cudaMalloc(&comp_mask, feature_len * sizeof(int));
         cudaMalloc(&comp_bitval, feature_len * sizeof(int));
@@ -371,13 +370,8 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         int *h_mask;
         long long unsigned *count_stuff;
         long long unsigned *host_count;
-        int32_t *dev_cluster;
         int *index_arr;
-        int32_t *masks, *multivals;
-        int32_t *dist_vector, *host_vector;
         int32_t *host_pick, *dev_pick;
-        int32_t *dev_centroids_count;
-        int *host_centroid_count;
         // Init all memory needed for compression
         cudaMalloc(&dev_num_bits, feature_len * 32 * sizeof(int));
         cudaMalloc(&mask, feature_len * sizeof(int));
@@ -385,16 +379,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         cudaMallocHost(&h_mask, feature_len * sizeof(int));
         cudaMalloc(&count_stuff, sizeof(long long unsigned));
         cudaMallocHost(&host_count, sizeof(long long unsigned));
-        cudaMalloc(&dev_cluster, nodes_per_gpu * sizeof(int32_t));
-        cudaMallocHost(&index_arr, nodes_per_gpu * sizeof(int));
-        cudaMalloc(&masks, num_centroids * feature_len * sizeof(int32_t));
-        cudaMalloc(&multivals, num_centroids * feature_len * sizeof(int32_t));
-        cudaMalloc(&dist_vector,  nodes_per_gpu * sizeof(int32_t));
-        cudaMallocHost(&host_vector,  nodes_per_gpu * sizeof(int32_t));
-        cudaMallocHost(&host_pick, sizeof(int32_t));
-        cudaMalloc(&dev_pick, sizeof(int32_t));
-        cudaMalloc(&dev_centroids_count, num_centroids * sizeof(int32_t));
-        cudaMallocHost(&host_centroid_count, num_centroids * sizeof(int));
+        cudaMallocHost(&index_arr, total_nodes * sizeof(int));
 
         cudaCheckError();
         // Start logic for compression
@@ -403,15 +388,15 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         cudaMemset(dev_num_bits, 0, feature_len * 32 * sizeof(int));
         cudaCheckError();
         count_bit_kernel<<<32, 512>>>
-            (typecast_feats, index_array, nodes_per_gpu, feature_len, dev_num_bits);
+            (typecast_feats, index_array, total_nodes, feature_len, dev_num_bits);
         cudaDeviceSynchronize();
         cudaCheckError();
         double max_comp = 0;
-        printf("Num nodes: %ld\n", nodes_per_gpu);
+        printf("Num nodes: %ld\n", total_nodes);
         for(float threshold = 0.7; threshold <= 1.0; threshold += 0.05) {
             cudaMemset(mask, 0, feature_len * sizeof(int));
             cudaMemset(vals, 0, feature_len * sizeof(int));
-            create_mask<<<1, 512>>> (dev_num_bits, mask, vals, feature_len, nodes_per_gpu, threshold);
+            create_mask<<<1, 512>>> (dev_num_bits, mask, vals, feature_len, total_nodes, threshold);
             cudaMemcpy(h_mask, mask, feature_len * sizeof(int), cudaMemcpyDeviceToHost);
             cudaCheckError();
             int popc = 0;
@@ -422,11 +407,11 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             //printf("\n");
             printf("Set bits %d of %d (%f%%)\n", popc, feature_len * 32, (double)(popc) * 100.0 / ((double)feature_len * 32.0));
             cudaMemset(count_stuff, 0, sizeof(long long unsigned));
-            check_feats<<<32, 512>>> (typecast_feats, index_array, nodes_per_gpu, feature_len, mask, vals, count_stuff);
+            check_feats<<<32, 512>>> (typecast_feats, index_array, total_nodes, feature_len, mask, vals, count_stuff);
             cudaMemcpy(host_count, count_stuff, sizeof(long long unsigned), cudaMemcpyDeviceToHost);
             cudaCheckError();
             printf("Threshold %f: Single-pass counts: %llu (Total %ld, %.3f%%)\n", threshold, *host_count, 
-                nodes_per_gpu * feature_len * 32, (double)*host_count * 100 / (nodes_per_gpu * feature_len * 32.0));
+                total_nodes * feature_len * 32, (double)*host_count * 100 / (total_nodes * feature_len * 32.0));
             // Store the mask/value for max compressed format
             if(*host_count > max_comp) {
                 printf("Selected threshold %f\n", threshold);
@@ -435,7 +420,52 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
                 max_comp = *host_count;
             }
         }
+        // Free all memory needed for compression
+        cudaFree(dev_num_bits);
+        cudaFree(mask);
+        cudaFree(vals);
+        cudaFreeHost(h_mask);
+        cudaFree(count_stuff);
+        cudaFreeHost(host_count);
+        cudaFreeHost(index_arr);
+        printf("Finished compression preprocessing\n");
+        fflush(stdout);
+
+        // Need to decide a reasonable cache size
+        // Cache size = feature capacity + hashmap capacity
+        // Feature capacity = feature_len * num_nodes
+        // Hashmap capacity = (key_size [32 bits] + value size [64 bits]) * num_nodes * 2
+        // Cache size = num_nodes * (feature_len + key_size * 2 + value_size * 2)
+        // Cache size = num_nodes * (feature_len + 6)
+        size_t cache_per_gpu = nodes_per_gpu * (feature_len + 6);
+        double est_comp = 1.0 - max_comp / (double)(total_nodes * feature_len * 32.0);
+        size_t comp_nodes_per_gpu = cache_per_gpu / (feature_len * est_comp + 6);
+        this->num_sets = ((comp_nodes_per_gpu * 2 + num_ways - 1) / num_ways) * num_gpus;
+        this->cache_capacity = num_sets * num_ways;
+        // Cache size = feature capacity + hashmap capacity
+        // Cache size - hashmap capacity = feature_len * num_nodes
+        // new_num_nodes = (cache size - hashmap capacity) / feature_len
+        nodes_per_gpu = (cache_per_gpu * num_gpus - this->cache_capacity * 3) / (feature_len * num_gpus);
+        std::cout << "Postcompression: Required " << cache_per_gpu << ", num sets: " << num_sets << ", cache capacity: " << cache_capacity;
+        std::cout << ", new nodes_per_gpu: " << nodes_per_gpu << "\n";
+    }
+
+    // K-Means based compression
+    if(flags & (DYN_COMP | DYN_COMP_CPU | DYN_COMP_TEST)) {
         /*
+        int32_t *dev_centroids_count;
+        int *host_centroid_count;
+        int32_t *dev_cluster;
+        int32_t *masks, *multivals;
+        int32_t *dist_vector, *host_vector;
+        unsigned num_centroids = 100;
+        cudaMalloc(&dist_vector, nodes_per_gpu * sizeof(int32_t));
+        cudaMallocHost(&host_vector, nodes_per_gpu * sizeof(int32_t));
+        cudaMalloc(&dev_cluster, nodes_per_gpu * sizeof(int32_t));
+        cudaMalloc(&dev_centroids_count, num_centroids * sizeof(int32_t));
+        cudaMallocHost(&host_centroid_count, num_centroids * sizeof(int));
+        cudaMalloc(&masks, num_centroids * feature_len * sizeof(int32_t));
+        cudaMalloc(&multivals, num_centroids * feature_len * sizeof(int32_t));
         cudaMemset(dev_cluster, 0, nodes_per_gpu * sizeof(int32_t));
         cudaMemcpy(index_arr, index_array, nodes_per_gpu * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemset(masks, -1, num_centroids * feature_len * sizeof(int32_t));
@@ -508,45 +538,16 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             printf("KMeans %f: counts %llu (Total %ld, %.3f%%)\n", threshold, *host_count, 
                 nodes_per_gpu * feature_len * 32, (double)*host_count * 100 / (nodes_per_gpu * feature_len * 32.0));
         }
-        */
-        // Free all memory needed for compression
-        cudaFree(dev_num_bits);
-        cudaFree(mask);
-        cudaFree(vals);
-        cudaFreeHost(h_mask);
-        cudaFree(count_stuff);
-        cudaFreeHost(host_count);
-        cudaFree(dev_cluster);
-        cudaFreeHost(index_arr);
         cudaFree(masks);
         cudaFree(multivals);
-        cudaFree(dist_vector);
-        cudaFreeHost(host_vector);
-        cudaFreeHost(host_pick);
-        cudaFree(dev_pick);
+        cudaFree(dev_cluster);
         cudaFree(dev_centroids_count);
         cudaFreeHost(host_centroid_count);
-        printf("Finished compression preprocessing\n");
-        fflush(stdout);
-
-        // Need to decide a reasonable cache size
-        // Cache size = feature capacity + hashmap capacity
-        // Feature capacity = feature_len * num_nodes
-        // Hashmap capacity = (key_size [32 bits] + value size [64 bits]) * num_nodes * 2
-        // Cache size = num_nodes * (feature_len + key_size * 2 + value_size * 2)
-        // Cache size = num_nodes * (feature_len + 6)
-        size_t cache_per_gpu = nodes_per_gpu * (feature_len + 6);
-        double est_comp = 1.0 - max_comp / (double)(nodes_per_gpu * feature_len * 32.0);
-        size_t comp_nodes_per_gpu = cache_per_gpu / (feature_len * est_comp + 6);
-        this->num_sets = ((comp_nodes_per_gpu * 2 + num_ways - 1) / num_ways) * num_gpus;
-        this->cache_capacity = num_sets * num_ways;
-        // Cache size = feature capacity + hashmap capacity
-        // Cache size - hashmap capacity = feature_len * num_nodes
-        // new_num_nodes = (cache size - hashmap capacity) / feature_len
-        nodes_per_gpu = (cache_per_gpu * num_gpus - this->cache_capacity * 3) / (feature_len * num_gpus);
-        std::cout << "Postcompression: Required " << cache_per_gpu << ", num sets: " << num_sets << ", cache capacity: " << cache_capacity;
-        std::cout << ", new nodes_per_gpu: " << nodes_per_gpu << "\n";
+        cudaFree(dist_vector);
+        cudaFreeHost(host_vector);
+        */
     }
+    
     //------------------------------
     auto start = TIME_NOW;
     // Allocate size of pointers
@@ -629,7 +630,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         cudaMemcpyAsync(device_uncompressed_ptrs, host_uncompressed_ptrs, sizeof(size_t) * batch_size, cudaMemcpyHostToDevice, stream);
 
         // Overallocate output bytes
-        void ** host_compressed_ptrs;
+        void **host_compressed_ptrs;
         char *compressed_buffer;
         cudaMallocHost(&host_compressed_ptrs, sizeof(size_t) * batch_size);
         // HOST ALLOC
@@ -759,10 +760,16 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         }
         
         // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
-        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t))
+        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t)) {
             shmem_size = 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t);
-        else 
+            printf("Have enough shmem (alloc = %d, maxshmem = %d, feat_len = %d)\n", 
+                shmem_size, maxShmem[0], feature_len);
+        }
+        else {
             shmem_size = 256 / 32 * 96 * sizeof(int32_t);
+            printf("Not enough shmem (alloc = %d, maxshmem = %d, feat_len = %d)\n", 
+                shmem_size, maxShmem[0], feature_len);
+        }
         cudaMemset(device_output_data, 0, in_bytes);
         decomp_start = TIME_NOW;
         test_decompressed_features_kernel2<<<64, 256, shmem_size>>>(

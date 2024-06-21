@@ -28,6 +28,7 @@
         cudaMemcpyAsync( \
             device_compressed_ptrs, host_compressed_ptrs,  \
             sizeof(size_t) * batch_size,cudaMemcpyHostToDevice, stream); \
+        cudaMemset(device_compressed_bytes, 0, sizeof(size_t) * batch_size); \
         cudaCheckError(); \
         nvcompStatus_t comp_res = nvcompBatched##ALGO##CompressAsync( \
             device_uncompressed_ptrs,\
@@ -40,6 +41,7 @@
             device_compressed_bytes, \
             nvcompBatched##ALGO##DefaultOpts, \
             stream); \
+        cudaStreamSynchronize(stream); \
         size_t total_compressed = 0; \
         if (comp_res != nvcompSuccess) \
         { \

@@ -209,8 +209,9 @@ __inline__ __device__ int read_one_iter(int32_t *cpu_src, int32_t *shm_meta, int
         // Selective write to GPU memory
         if(k >= 0 && k < max_elems) {
             *dest_element = src_data;
+            
             /*unsigned int mask = __activemask();
-            if(threadId == __ffs(mask) - 1) {
+            if(k % 32 == 0) {
                 printf("1. Write %d bytes; num_threads %d; %p; min %d max %d\n", 
                     (int)(__popc(mask) * sizeof(int32_t)), sub_val, 
                     cpu_src + start_offset, min_elems, max_elems);
@@ -236,8 +237,9 @@ __inline__ __device__ int read_one_iter(int32_t *cpu_src, int32_t *shm_meta, int
             // Selective write to GPU memory
             if(k >= 0 && k < max_elems) {
                 *dest_element = src_data;
+                
                 /*unsigned int mask = __activemask();
-                if(threadId == __ffs(mask) - 1) {
+                if(k % 32 == 0) {
                     printf("1b. Write %d bytes; num_threads %d; %p; min %d max %d\n", 
                         (int)(__popc(mask) * sizeof(int32_t)), add_val, 
                         cpu_src + start_offset, min_elems, max_elems);
@@ -263,8 +265,9 @@ __inline__ __device__ int read_one_iter(int32_t *cpu_src, int32_t *shm_meta, int
         // Selective write to GPU memory
         if(k < max_elems) {
             *dest_element = src_data;
+            
             /*unsigned int mask = __activemask();
-            if(threadId == __ffs(mask) - 1) {
+            if(k % 32 == 0) {
                 printf("2. Write %d bytes; offset %d; min+onset %d; %p; min %d max %d\n", 
                 (int)(__popc(mask) * sizeof(int32_t)), offset, min_elems + onset, 
                 cpu_src + start_offset, min_elems, max_elems);
@@ -309,10 +312,6 @@ __inline__ __device__ void decompress_and_write_cpu(int32_t *dest, int32_t *src,
         printf("Offset: %d, Metadata offset = %d, working offset = %d\n", 
             offset, metadata_offset, working_offset);*/
     }
-
-    // TODO - Implement this:
-    // * Use shared memory metadata/workspace instead of cpu src
-    // * Use ballot to keep reading iters as needed
 
     // Code to decompress
     int32_t bitshift = 0;
