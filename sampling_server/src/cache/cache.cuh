@@ -3,8 +3,7 @@
 
 #include "graph_storage.cuh"
 #include "feature_storage.cuh"
-#include "../dyn_cache/dyn_cache.cuh"
-#include "../dyn_cache/static_cache.cuh"
+#include "../comp_cache/static_cache.cuh"
 
 #include <iostream>
 #include <vector>

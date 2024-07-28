@@ -371,7 +371,6 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         long long unsigned *count_stuff;
         long long unsigned *host_count;
         int *index_arr;
-        int32_t *host_pick, *dev_pick;
         // Init all memory needed for compression
         cudaMalloc(&dev_num_bits, feature_len * 32 * sizeof(int));
         cudaMalloc(&mask, feature_len * sizeof(int));
@@ -414,10 +413,12 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
                 total_nodes * feature_len * 32, (double)*host_count * 100 / (total_nodes * feature_len * 32.0));
             // Store the mask/value for max compressed format
             if(*host_count > max_comp) {
-                printf("Selected threshold %f\n", threshold);
                 cudaMemcpy(comp_mask, mask, feature_len * sizeof(float), cudaMemcpyDeviceToDevice);
                 cudaMemcpy(comp_bitval, vals, feature_len * sizeof(float), cudaMemcpyDeviceToDevice);
                 max_comp = *host_count;
+                compress_len = feature_len * (total_nodes * feature_len * 32.0 - *host_count) / (total_nodes * feature_len * 32) + 1;
+
+                printf("Selected threshold %f; compress_len %d\n", threshold, compress_len);
             }
         }
         // Free all memory needed for compression
@@ -458,6 +459,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         int32_t *dev_cluster;
         int32_t *masks, *multivals;
         int32_t *dist_vector, *host_vector;
+        int32_t *host_pick, *dev_pick;
         unsigned num_centroids = 100;
         cudaMalloc(&dist_vector, nodes_per_gpu * sizeof(int32_t));
         cudaMallocHost(&host_vector, nodes_per_gpu * sizeof(int32_t));
@@ -608,6 +610,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         cudaMalloc(&device_input_data, in_bytes);
         cudaMemcpyAsync(device_input_data, cpu_features, in_bytes, cudaMemcpyHostToDevice, stream);
         cudaMalloc(&device_output_data, in_bytes);
+        cudaCheckError();
 
         cudaMallocHost(&host_uncompressed_bytes, sizeof(size_t)*batch_size);
         for (size_t i = 0; i < batch_size; ++i) {
@@ -625,6 +628,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         void ** device_uncompressed_ptrs;
         cudaMalloc(&device_uncompressed_bytes, sizeof(size_t) * batch_size);
         cudaMalloc(&device_uncompressed_ptrs, sizeof(size_t) * batch_size);
+        cudaCheckError();
         
         cudaMemcpyAsync(device_uncompressed_bytes, host_uncompressed_bytes, sizeof(size_t) * batch_size, cudaMemcpyHostToDevice, stream);
         cudaMemcpyAsync(device_uncompressed_ptrs, host_uncompressed_ptrs, sizeof(size_t) * batch_size, cudaMemcpyHostToDevice, stream);
@@ -766,7 +770,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
                 shmem_size, maxShmem[0], feature_len);
         }
         else {
-            shmem_size = 256 / 32 * 96 * sizeof(int32_t);
+            shmem_size = maxShmem[0]; //256 / 32 * 96 * sizeof(int32_t);
             printf("Not enough shmem (alloc = %d, maxshmem = %d, feat_len = %d)\n", 
                 shmem_size, maxShmem[0], feature_len);
         }
@@ -774,7 +778,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         decomp_start = TIME_NOW;
         test_decompressed_features_kernel2<<<64, 256, shmem_size>>>(
             comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data, 
-            nodes_per_gpu, feature_len, comp_bitmask, shmem_size);
+            nodes_per_gpu, feature_len, (float)*comp_size / in_bytes * feature_len, comp_bitmask, shmem_size);
         cudaDeviceSynchronize();
         cudaCheckError();
         decomp_end = TIME_NOW;
@@ -1069,7 +1073,7 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
         else 
             shmem_size = 512 / 32 * 96 * sizeof(int32_t);
         compress_cpu_transfer_kernel2<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
-            node_index, num_nodes, feature_len, output_buffer, comp_bitmask, input_feats, 
+            node_index, num_nodes, feature_len, compress_len, output_buffer, comp_bitmask, input_feats, 
             nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets, shmem_size,
             misses, lookups, inserts);
     }
