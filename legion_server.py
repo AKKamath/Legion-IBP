@@ -113,7 +113,7 @@ def Run(args):
         test_set_num = 9859
     elif args.dataset_name == "mag":
         path = args.dataset_path + "/mag/"
-        vertices_num = 244160499
+        vertices_num = 121751666
         edges_num = 1297748926
         features_dim = 384
         train_set_num = 1112392

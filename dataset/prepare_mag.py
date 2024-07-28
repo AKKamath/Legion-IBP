@@ -5,16 +5,16 @@ import torch
 
 # root = '/home/wzq/datasets/OGB' can be replaced to the path where you store the dataset
 dataset = MAG240MDataset()
-paper_offset = dataset.num_authors + dataset.num_institutions
-num_nodes = paper_offset + dataset.num_papers
+#paper_offset = dataset.num_authors + dataset.num_institutions
+num_nodes = dataset.num_papers
 num_features = dataset.num_paper_features
 
 print(dataset)
 
 split_idx = dataset.get_idx_split()
-train_idx = (torch.LongTensor(split_idx["train"]) + paper_offset).numpy()
-valid_idx = (torch.LongTensor(split_idx["valid"]) + paper_offset).numpy()
-test_idx  = (torch.LongTensor(split_idx["test-dev"]) + paper_offset).numpy()
+train_idx = (torch.LongTensor(split_idx["train"])).numpy()
+valid_idx = (torch.LongTensor(split_idx["valid"])).numpy()
+test_idx  = (torch.LongTensor(split_idx["test-dev"])).numpy()
 #graph, label = dataset[0] # graph: library-agnostic graph object
 label = dataset.paper_label
 
