@@ -509,7 +509,7 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
         shm_bitval[i] = dev_bitval[i];
     }
     int32_t *full_mask, *full_bitval;
-    if(shmem_size >= feature_len) {
+    if constexpr(FITS_SHMEM) {
         full_mask = shm_mask;
         full_bitval = shm_bitval;
     } else {
@@ -537,7 +537,7 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
             if(laneId == 0)
                 atomicAdd(misses, 1);
 #endif
-            if(bitmask[i / 32] & (1 << (i % 32))) {
+            if(bitmask[nodeId / 32] & (1 << (nodeId % 32))) {
                 decompress_and_write_cpu<FITS_SHMEM>((int32_t*)&output_features[i * feature_len], 
                     (int32_t*)&cpu_features[nodeId * feature_len], shm_mask, shm_bitval, 
                     feature_len, compressed_len, workspace, dev_mask, dev_bitval, shmem_size);
