@@ -569,7 +569,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     for(int i = 0; i < num_gpus; i++) {
         int device_id = i + dev_start;
         cudaSetDevice(device_id);
-        cudaDeviceGetAttribute(&maxShmem[i], cudaDevAttrMaxSharedMemoryPerBlock, device_id);
+        cudaDeviceGetAttribute(&maxShmem[i], cudaDevAttrMaxSharedMemoryPerBlockOptin, device_id);
 
         // Allocate the actual cache
         cudaMalloc(&host_cache_storage[i], nodes_per_gpu * feature_len * sizeof(float));
@@ -736,16 +736,26 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             "Us", in_bytes, *comp_size, (float)in_bytes / *comp_size);
         cudaCheckError();
         
+        auto kernel = &test_decompressed_features_kernel<true>;
         int shmem_size;
-        if(feature_len * sizeof(float) * 2 < maxShmem[0])
+        if(feature_len * sizeof(float) * 2 < maxShmem[0]){
             shmem_size = feature_len * sizeof(float) * 2;
-        else
+            kernel = &test_decompressed_features_kernel<true>;
+        }
+        else {
             shmem_size = 0;
+            kernel = &test_decompressed_features_kernel<false>;
+        }
         cudaMemset(device_output_data, 0, in_bytes);
+        // Need opt-in for large shmem allocations
+        if (shmem_size >= 48 * 1024) {
+            cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
+            cudaCheckError();
+        }
         decomp_start = TIME_NOW;
-        test_decompressed_features_kernel<<<64, 256, shmem_size>>>(
+        kernel<<<64, 256, shmem_size>>>(
             comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data, 
-            nodes_per_gpu, feature_len, comp_bitmask, shmem_size);
+            nodes_per_gpu, feature_len, comp_bitmask, 4);
         cudaDeviceSynchronize();
         cudaCheckError();
         decomp_end = TIME_NOW;
@@ -763,22 +773,30 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             }
         }
         
+        auto kernel2 = &test_decompressed_features_kernel2<true>;
         // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
         if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t)) {
             shmem_size = 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t);
-            printf("Have enough shmem (alloc = %d, maxshmem = %d, feat_len = %d)\n", 
-                shmem_size, maxShmem[0], feature_len);
+            printf("Have enough shmem (alloc = %d, maxshmem = %d, feat_len = %d, required = %d)\n", 
+                shmem_size, maxShmem[0], feature_len, 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t));
+            kernel2 = &test_decompressed_features_kernel2<true>;
         }
         else {
             shmem_size = maxShmem[0]; //256 / 32 * 96 * sizeof(int32_t);
-            printf("Not enough shmem (alloc = %d, maxshmem = %d, feat_len = %d)\n", 
-                shmem_size, maxShmem[0], feature_len);
+            printf("Not enough shmem (alloc = %d, maxshmem = %d, feat_len = %d, required = %d)\n", 
+                shmem_size, maxShmem[0], feature_len, 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t));
+            kernel2 = &test_decompressed_features_kernel2<false>;
+        }
+        // Need opt-in for large shmem allocations
+        if (shmem_size >= 48 * 1024) {
+            cudaFuncSetAttribute(kernel2, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
+            cudaCheckError();
         }
         cudaMemset(device_output_data, 0, in_bytes);
         decomp_start = TIME_NOW;
-        test_decompressed_features_kernel2<<<64, 256, shmem_size>>>(
+        kernel2<<<64, 256, shmem_size>>>(
             comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data, 
-            nodes_per_gpu, feature_len, (float)*comp_size / in_bytes * feature_len, comp_bitmask, shmem_size);
+            nodes_per_gpu, feature_len, (float)*comp_size / in_bytes * feature_len, comp_bitmask, shmem_size, 4);
         cudaDeviceSynchronize();
         cudaCheckError();
         decomp_end = TIME_NOW;
@@ -1036,21 +1054,32 @@ void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *inpu
 void StaticCache::test_lookup_features(int64_t num_nodes, float *input_feats, 
     int32_t *index_array, int *success_lookups, int *keys_found)
 {
-    int shmem_size;
-    // TODO: Do this by the executing GPU. Relevant for heterogeneous GPU machines
-    if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + sizeof(int32_t) * 512)
-        shmem_size = 2 * feature_len * sizeof(int32_t) + sizeof(int32_t) * 512;
-    else 
-        shmem_size = sizeof(int32_t) * 512;
     if(!(flags & DYN_COMP))
         static_test_lookup_features_kernel<<<32, 512>>>(dev_cache_storage, dev_cache_key, 
             dev_cache_offset, num_nodes, feature_len, input_feats, index_array, 
             num_gpus, num_ways, num_sets, success_lookups, keys_found);
-    else
-        compressed_test_lookup_features_kernel<<<32, 512, shmem_size>>>
+    else {
+        auto kernel = &compressed_test_lookup_features_kernel<true>;
+        int shmem_size;
+        // TODO: Do this by the executing GPU. Relevant for heterogeneous GPU machines
+        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + sizeof(int32_t) * 512) {
+            shmem_size = 2 * feature_len * sizeof(int32_t) + sizeof(int32_t) * 512;
+            kernel = &compressed_test_lookup_features_kernel<true>;
+        }
+        else {
+            shmem_size = sizeof(int32_t) * 512;
+            kernel = &compressed_test_lookup_features_kernel<false>;
+        }
+        // Need opt-in for large shmem allocations
+        if (shmem_size >= 48 * 1024) {
+            cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
+            cudaCheckError();
+        }
+        kernel<<<32, 512, shmem_size>>>
             (dev_cache_storage, dev_cache_key, dev_cache_offset, comp_mask, comp_bitval, 
             num_nodes, feature_len, input_feats, index_array, num_gpus, num_ways, num_sets, 
-            shmem_size, success_lookups, keys_found);
+            success_lookups, keys_found, 4);
+    }
 }
 
 void StaticCache::retrieve(int32_t *nodeIds, int64_t num_nodes, int64_t *node_index, 
@@ -1067,32 +1096,73 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
 {
     int shmem_size;
     if(flags & DYN_CPU_TEST2) {
+        auto kernel = &compress_cpu_transfer_kernel2<true>;
         // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
-        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + 512 / 32 * 96 * sizeof(int32_t))
+        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + 512 / 32 * 96 * sizeof(int32_t)) {
             shmem_size = 2 * feature_len * sizeof(int32_t) + 512 / 32 * 96 * sizeof(int32_t);
-        else 
+            kernel = &compress_cpu_transfer_kernel2<true>;
+        }
+        else {
             shmem_size = 512 / 32 * 96 * sizeof(int32_t);
-        compress_cpu_transfer_kernel2<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
+            kernel = &compress_cpu_transfer_kernel2<false>;
+        }
+        // Need opt-in for large shmem allocations
+        if (shmem_size >= 48 * 1024) {
+            cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
+            cudaCheckError();
+        }
+        
+        kernel<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
             node_index, num_nodes, feature_len, compress_len, output_buffer, comp_bitmask, input_feats, 
             nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets, shmem_size,
             misses, lookups, inserts);
     }
     else {
-        // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
-        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t))
-            shmem_size = 2 * feature_len * sizeof(int32_t);
-        else 
-            shmem_size = 0;
-        if(flags & DYN_COMP_CPU)
-            compress_cpu_transfer_kernel<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
+        if(flags & DYN_COMP_CPU) {
+            auto kernel = &compress_cpu_transfer_kernel<true>;
+            // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
+            if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t)) {
+                shmem_size = 2 * feature_len * sizeof(int32_t);
+                kernel = &compress_cpu_transfer_kernel<true>;
+            }
+            else {
+                shmem_size = 0;
+                kernel = &compress_cpu_transfer_kernel<false>;
+            }
+            
+            // Need opt-in for large shmem allocations
+            if (shmem_size >= 48 * 1024) {
+                cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
+                cudaCheckError();
+            }
+            kernel<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
                 node_index, num_nodes, feature_len, output_buffer, comp_bitmask, input_feats, 
-                nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets, shmem_size,
+                nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets,
                 misses, lookups, inserts);
-        else if(flags & DYN_COMP)
-            compress_transfer_kernel<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
+        }
+        else if(flags & DYN_COMP) {
+            auto kernel = &compress_transfer_kernel<true>;
+
+            // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
+            if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t)) {
+                shmem_size = 2 * feature_len * sizeof(int32_t);
+                kernel = &compress_transfer_kernel<true>;
+            }
+            else {
+                shmem_size = 0;
+                kernel = &compress_transfer_kernel<false>;
+            }
+            
+            // Need opt-in for large shmem allocations
+            if (shmem_size >= 48 * 1024) {
+                cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
+                cudaCheckError();
+            }
+            kernel<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
                 node_index, num_nodes, feature_len, output_buffer, 
-                input_feats, nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets, shmem_size,
+                input_feats, nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets,
                 misses, lookups, inserts);
+        }
         else
             static_transfer_kernel<<<32, 512, 0, stream>>>(
                 dev_cache_storage, dev_cache_key, dev_cache_offset, node_index, num_nodes, 

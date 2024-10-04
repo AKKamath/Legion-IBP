@@ -196,14 +196,14 @@ __global__ void decompressed_cpu_features_kernel(
     }
 }
 
+template<bool FITS_SHMEM>
 __global__ void test_decompressed_features_kernel(
     int32_t *mask, int32_t *bitval, int32_t *input_features, int32_t *output_features, 
-    int64_t total_nodes, int64_t feature_len, int32_t *bitmask, size_t shmem_size,
-    int chunk_size = 4)
+    int64_t total_nodes, int64_t feature_len, int32_t *bitmask, int chunk_size = 4)
 {
     extern __shared__ int32_t shared_mem[];
     int32_t *shm_mask = shared_mem, *shm_bitval = &shared_mem[feature_len];
-    if(shmem_size >= feature_len * sizeof(int32_t) * 2) {
+    if constexpr(FITS_SHMEM) {
         for(int i = threadIdx.x; i < feature_len; i += blockDim.x) {
             shm_mask[i] = mask[i];
             shm_bitval[i] = bitval[i];
@@ -230,6 +230,7 @@ __global__ void test_decompressed_features_kernel(
     }
 }
 
+template<bool FITS_SHMEM>
 __global__ void test_decompressed_features_kernel2(
     const int32_t *mask, const int32_t *bitval, const int32_t *input_features, int32_t *output_features, 
     int64_t total_nodes, int64_t feature_len, int64_t compressed_len, const int32_t *bitmask, size_t shmem_size,
@@ -257,7 +258,7 @@ __global__ void test_decompressed_features_kernel2(
     for(int i = warpId; i < total_nodes; i += numWarps) {
         // Compressed insert
         if(bitmask[i / 32] & (1 << (i % 32))){
-            decompress_and_write_cpu(&output_features[i * feature_len], 
+            decompress_and_write_cpu<FITS_SHMEM>(&output_features[i * feature_len], 
                 &input_features[i * feature_len], shm_mask, shm_bitval, 
                 feature_len, compressed_len, workspace, mask, bitval, shmem_size, chunk_size);
         } else {
@@ -268,10 +269,11 @@ __global__ void test_decompressed_features_kernel2(
 }
 
 // [TEST] Check if features properly copied into cache
+template <bool FITS_SHMEM>
 __global__ void compressed_test_lookup_features_kernel(
     void **dev_cache, int **dev_cache_key, ull **dev_cache_val, int32_t *dev_mask, 
     int32_t *dev_bitval, int64_t num_nodes, int64_t feature_len, void *cpu_features, 
-    int32_t *index_array, int num_gpus, int num_ways, int32_t num_sets, int shmem_size,
+    int32_t *index_array, int num_gpus, int num_ways, int32_t num_sets, 
     int *success_lookups = nullptr, int *keys_found = nullptr, int32_t chunk_size = 4)
 {
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
@@ -282,7 +284,7 @@ __global__ void compressed_test_lookup_features_kernel(
     extern __shared__ int32_t shared_mem[];
     int32_t *shm_mask = shared_mem, *shm_bitval = &shared_mem[feature_len];
     int32_t *shm_workspace;
-    if(shmem_size >= feature_len * sizeof(int32_t) * 2) {
+    if constexpr(FITS_SHMEM) {
         shm_workspace = &shared_mem[2 * feature_len + threadIdx.x];
         for(int i = threadIdx.x; i < feature_len; i += blockDim.x) {
             shm_mask[i] = dev_mask[i];
@@ -423,15 +425,16 @@ __global__ void compressed_test_lookup_features_kernel(
     }
 }
 
+template <bool FITS_SHMEM>
 __global__ void compress_cpu_transfer_kernel(void **dev_cache, int64_t *cache_index, 
     int64_t num_nodes, int64_t feature_len, float *output_features, int32_t *bitmask,
     float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval, 
-    int32_t total_nodes, int num_ways, int32_t num_sets, int shmem,
+    int32_t total_nodes, int num_ways, int32_t num_sets,
     ull *misses, ull *lookups, ull *inserts) {
     
     extern __shared__ int32_t shared_mem[];
     int32_t *shm_mask = shared_mem, *shm_bitval = &shared_mem[feature_len];
-    if(shmem >= feature_len * sizeof(int32_t) * 2) {
+    if constexpr(FITS_SHMEM) {
         for(int i = threadIdx.x; i < feature_len; i += blockDim.x) {
             shm_mask[i] = dev_mask[i];
             shm_bitval[i] = dev_bitval[i];
@@ -484,6 +487,7 @@ __global__ void compress_cpu_transfer_kernel(void **dev_cache, int64_t *cache_in
     }
 }
 
+template<bool FITS_SHMEM>
 __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_index, 
     int64_t num_nodes, int64_t feature_len, int64_t compressed_len, float *output_features, int32_t *bitmask,
     float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval, 
@@ -534,7 +538,7 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
                 atomicAdd(misses, 1);
 #endif
             if(bitmask[i / 32] & (1 << (i % 32))) {
-                decompress_and_write_cpu((int32_t*)&output_features[i * feature_len], 
+                decompress_and_write_cpu<FITS_SHMEM>((int32_t*)&output_features[i * feature_len], 
                     (int32_t*)&cpu_features[nodeId * feature_len], shm_mask, shm_bitval, 
                     feature_len, compressed_len, workspace, dev_mask, dev_bitval, shmem_size);
             } else {
@@ -556,16 +560,17 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
     }
 }
 
+template<bool FITS_SHMEM>
 __global__ void compress_transfer_kernel(void **dev_cache, int64_t *cache_index, 
     int64_t num_nodes, int64_t feature_len, float *output_features, 
     float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval, 
-    int32_t total_nodes, int num_ways, int32_t num_sets, int shmem_size,
+    int32_t total_nodes, int num_ways, int32_t num_sets,
     ull *misses, ull *lookups, ull *inserts) {
     
     extern __shared__ int32_t shared_mem[];
     // Move mask to shared memory if we have space. Otherwise use device memory
     int32_t *shm_mask = shared_mem, *shm_bitval = &shared_mem[feature_len];
-    if(shmem_size >= feature_len * sizeof(int32_t) * 2) {
+    if constexpr(FITS_SHMEM) {
         for(int i = threadIdx.x; i < feature_len; i += blockDim.x) {
             shm_mask[i] = dev_mask[i];
             shm_bitval[i] = dev_bitval[i];
