@@ -131,17 +131,8 @@ void mmap_features_read(std::string &features_file, float* features){
     int64_t buf_len = lseek(fd, 0, SEEK_END);
     const float *buf = (float *)mmap(NULL, buf_len, PROT_READ, MAP_PRIVATE, fd, 0);
     const float* buf_end = buf + buf_len/sizeof(float);
-    float temp;
-    while(buf < buf_end){
-        temp = *buf;
-        features[n_idx++] = temp;
-        buf++;
-/*        printf("%f ", features[n_idx-1]);
-        if(n_idx > 100){
-          fflush(stdout);
-          abort();
-        }*/
-    }
+    std::cout<<"Opened file "<<features_file<<" found "<< buf_len/sizeof(float) <<" features\n";
+    memcpy(features, buf, buf_len);
     close(fd);
     return;
 }
