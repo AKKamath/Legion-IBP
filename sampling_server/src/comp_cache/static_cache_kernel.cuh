@@ -109,7 +109,7 @@ __global__ void static_insert_features_kernel(void *cache, int **cache_key,
         __syncwarp();
         int64_t nodeId = index_array[i];
         // Otherwise just use aligned copies
-        memcpy_warp((void *)((D_WORD *)cache + i * feature_len), 
+        memcpy_warp(((float *)cache + i * feature_len), 
                     &cpu_features[nodeId * feature_len], feature_len);
         __syncwarp();
         
@@ -247,20 +247,20 @@ __global__ void static_transfer_kernel(void **dev_cache, int **dev_cache_key,
         if(dyn_flags & DYN_OPT) {
             // [FAKE] Optimal caching. Always hits in cache
             int offset = 1;
-            memcpy_warp_isspace(&output_features[i * feature_len], &((float*)dev_cache[0])[offset * feature_len], feature_len);
+            memcpy_warp(&output_features[i * feature_len], &((float*)dev_cache[0])[offset * feature_len], feature_len);
         } else if(dyn_flags & DYN_UNOPT) {
             // [FAKE] Unoptimized caching. Always misses in cache
-            memcpy_warp_isspace(&output_features[i * feature_len], &cpu_features[nodeId * feature_len], feature_len);
+            memcpy_warp(&output_features[i * feature_len], &cpu_features[nodeId * feature_len], feature_len);
         }
         // Not in cache, manual copy
         else if(index < 0) {
             // If we have extra space on both sides, we can use optimized padded copy
-            memcpy_warp_isspace(&output_features[i * feature_len], 
+            memcpy_warp(&output_features[i * feature_len], 
                                 &cpu_features[nodeId * feature_len], feature_len);
         } else {
             int devId = value_to_gpu_index(index, num_sets, num_ways);
             int offset = value_to_offset(index, num_sets, num_ways);
-            memcpy_warp_isspace(&output_features[i * feature_len], &((float*)dev_cache[devId])[offset * feature_len], feature_len);
+            memcpy_warp(&output_features[i * feature_len], &((float*)dev_cache[devId])[offset * feature_len], feature_len);
         }
     }
 }

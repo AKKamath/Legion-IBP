@@ -1,6 +1,7 @@
 #ifndef STATICCACHE_H
 #define STATICCACHE_H
 #include "cache_helper.cuh"
+#include "ibp_helpers.cuh"
 
 class StaticCache {
 public:

@@ -17,3 +17,4 @@ dataset/mag
 dataset/citeseer
 **/*.log
 **/*.png
+meta_config
