@@ -6,294 +6,8 @@
 #include <iostream>
 #include <thrust/sequence.h>
 #include "compress_test.cuh"
+#include "ibp_preproc_host.cuh"
 using namespace nvcomp;
-
-// Potential optimization: tiled count
-__global__ void count_bit_kernel(int32_t *feature_arr, int *index_arr, int num_nodes, unsigned feature_len, int *bit_count) {
-    for(int i = blockIdx.x; i < num_nodes; i += gridDim.x) {
-        int64_t nodeId = index_arr[i];
-        for(unsigned j = threadIdx.x; j < feature_len; j += blockDim.x) {
-            int32_t val = feature_arr[nodeId * feature_len + j];
-            for(int bit = 0; bit < 32; ++bit) {
-                if(val & (1 << bit))
-                    atomicAdd(&bit_count[j * 32 + bit], 1);
-            }
-        }
-    }
-}
-
-__global__ void create_mask(int32_t *bit_count, int *mask, int *vals, int feature_len, float num_nodes, float threshold) {
-    for(int i = threadIdx.x; i < feature_len; i += blockDim.x) {
-        int32_t val = 0;
-        int32_t masker = 0;
-        for(int j = 0; j < 32; ++j) {
-            if(bit_count[i * 32 + j] > threshold * num_nodes) {
-                val |= (1 << j);
-                masker |= (1 << j);
-            } else if(bit_count[i * 32 + j] < (1.0 - threshold) * num_nodes) {
-                masker |= (1 << j);
-            }
-        }
-        vals[i] = val;
-        mask[i] = masker;
-    }
-}
-
-__global__ void check_feats(int32_t *feature_arr, int32_t *index_arr, int num_nodes, int feature_len, int *mask, int *vals, long long unsigned *count) {
-    __shared__ long long unsigned ctr;
-    ctr = 0;
-    __syncthreads();
-    for(int i = blockIdx.x; i < num_nodes; i += gridDim.x) {
-        int64_t nodeId = index_arr[i];
-        for(int j = threadIdx.x; j < feature_len; j += blockDim.x) {
-            int32_t val = feature_arr[nodeId * feature_len + j];
-            if((val & mask[j]) == vals[j])
-                atomicAdd(&ctr, __popc(mask[j]));
-        }
-        __syncthreads();
-        if(ctr > feature_len && threadIdx.x == 0) {
-            //printf("Node %d\n", i);
-            atomicAdd(count, ctr - feature_len);
-        }
-        __syncthreads();
-        ctr = 0;
-        __syncthreads();
-    }
-}
-
-__global__ void check_feats_strict(int32_t *feature_arr, int32_t *index_arr, int num_nodes, int feature_len, int *mask, int *vals, long long unsigned *count) {
-    __shared__ long long unsigned ctr, ctr2;
-    ctr = 0;
-    for(int i = blockIdx.x; i < num_nodes; i += gridDim.x) {
-        int64_t nodeId = index_arr[i];
-        ctr2 = 0;
-        __syncthreads();
-        for(int j = threadIdx.x; j < feature_len; j += blockDim.x) {
-            int32_t val = feature_arr[nodeId * feature_len + j];
-            if((val & mask[j]) == vals[j]) {
-                atomicAdd(&ctr, __popc(mask[j]));
-                atomicAdd(&ctr2, 1);
-            }
-        }
-        __syncthreads();
-        if(ctr2 == feature_len && threadIdx.x == 0) {
-            atomicAdd(count, ctr);
-        }
-        __syncthreads();
-        ctr = 0;
-        __syncthreads();
-    }
-}
-
-
-__global__ void classify_nodes(int *masks, int *vals, int num_centroids,
-    int32_t *typecast_feats, int32_t *index_arr, int num_nodes, int32_t *dev_cluster, int feature_len) {
-    __shared__ int min_dist;
-    int warpId = threadIdx.x / DWARP_SIZE;
-    int numWarps = blockDim.x / DWARP_SIZE;
-    const bool warpLeader = (threadIdx.x % DWARP_SIZE == 0);
-    for(int i = blockIdx.x; i < num_nodes; i += gridDim.x) {
-        min_dist = INT_MAX;
-        int64_t nodeId = index_arr[i];
-        __syncthreads();
-        // Align to warp factor
-        for(int j = warpId; j < (num_centroids + numWarps - (num_centroids % numWarps)); j += numWarps) {
-            int dist = 0;
-            if(j < num_centroids) {
-                for(int k = threadIdx.x % DWARP_SIZE; k < feature_len; k += DWARP_SIZE) {
-                    //typecast_feats[i * feature_len + k] ^ dev_centroids[j * feature_len + k];
-                    int32_t val = (typecast_feats[nodeId * feature_len + k] & masks[j * feature_len + k]) ^ vals[j * feature_len + k];
-                    dist += __popc(val);
-                }
-                __syncwarp();
-                for (int offset = 16; offset > 0; offset /= 2)
-                    dist += __shfl_down_sync(FULL_MASK, dist, offset);
-                __syncwarp();
-                if(warpLeader) {
-                    atomicMin(&min_dist, dist);
-                }
-            }
-            __syncthreads();
-            if(warpLeader) {
-                if(min_dist == dist) {
-                    atomicExch(&dev_cluster[i], j);
-                }
-            }
-        }
-    }
-}
-
-__global__ void calc_distances(int32_t *centroids, int num_centroids, int32_t *typecast_feats, 
-        int32_t *index_arr, int num_nodes, int32_t *dist_vector, int feature_len) {
-    int warpId = threadIdx.x / DWARP_SIZE;
-    int numWarps = blockDim.x / DWARP_SIZE;
-    const bool warpLeader = (threadIdx.x % DWARP_SIZE == 0);
-    for(int i = blockIdx.x; i < num_nodes; i += gridDim.x) {
-        int64_t nodeId = index_arr[i];
-        dist_vector[i] = INT_MAX;
-        __syncthreads();
-        // Align to warp factor
-        for(int j = warpId; j < (num_centroids + numWarps - (num_centroids % numWarps)); j += numWarps) {
-            if(j < num_centroids) {
-                int dist = 0;
-                for(int k = threadIdx.x % DWARP_SIZE; k < feature_len; k += DWARP_SIZE) {
-                    //typecast_feats[i * feature_len + k] ^ dev_centroids[j * feature_len + k];
-                    int32_t val = (typecast_feats[nodeId * feature_len + k] ^ centroids[j * feature_len + k]);
-                    dist += __popc(val);
-                }
-                __syncwarp();
-                for (int offset = 16; offset > 0; offset /= 2)
-                    dist += __shfl_down_sync(FULL_MASK, dist, offset);
-                __syncwarp();
-                if(warpLeader) {
-                    atomicMin(&dist_vector[i], dist);
-                }
-            }
-        }
-    }
-}
-
-__global__ void pick_max_distance(int32_t *dist_vector, int num_nodes, int *choice) 
-{
-    if(blockIdx.x > 0)
-        return;
-    
-    __shared__ int max_dist;
-    max_dist = 0;
-    __syncthreads();
-    for(int i = threadIdx.x; i < num_nodes; i += blockDim.x) {
-        if(dist_vector[i] > max_dist)
-            atomicMax(&max_dist, dist_vector[i]);
-        __syncthreads();
-        if(max_dist == dist_vector[i]) {
-            atomicExch(choice, i);
-        }
-        __syncthreads();
-    }
-}
-
-#define SHARED_MEM (32 * 256)
-__global__ void compute_new_centroids(int32_t *dev_centroids, int num_centroids, int *centroid_count,
-    int32_t *typecast_feats, int32_t *index_arr, int num_nodes, int32_t *dev_cluster, int feature_len) {
-    __shared__ int bits_set[SHARED_MEM];
-    for(int cur_centroid = blockIdx.x; cur_centroid < num_centroids; cur_centroid += gridDim.x) {
-        // Reset bit distances for this centroid
-        for(int index = threadIdx.x; index < SHARED_MEM; index += blockDim.x)
-            bits_set[index] = 0;
-        centroid_count[cur_centroid] = 0;
-        __syncthreads();
-        for(int i = 0; i < num_nodes; ++i) {
-            int64_t nodeId = index_arr[i];
-            // Find relevant node
-            if(dev_cluster[i] == cur_centroid) {
-                if(threadIdx.x == 0)
-                    centroid_count[cur_centroid]++;
-                __syncthreads();
-                // Compute distance
-                for(int id = threadIdx.x; id < feature_len; id += blockDim.x) {
-                    for(int bit = 0; bit < 32; ++bit) {
-                        if(typecast_feats[nodeId * feature_len + id] & (1 << bit))
-                            bits_set[id * 32 + bit]++;
-                    }
-                }
-            }
-        }
-        __syncthreads();
-        // Compute new centroid based on obtained bit distances
-        for(int id = threadIdx.x; id < feature_len; id += blockDim.x) {
-            int32_t bitmask = 0;
-            for(int bit = 0; bit < 32; ++bit) {
-                if(bits_set[id * 32 + bit] > centroid_count[cur_centroid] / 2)
-                    bitmask |= (1 << bit);
-            }
-            dev_centroids[cur_centroid * feature_len + id] = bitmask;
-        }
-    }
-}
-
-__global__ void create_mask_many(int *masks, int *vals, int num_centroids, int32_t *centroid_count, int32_t *typecast_feats, int32_t *index_arr, 
-        int32_t *dev_cluster, int feature_len, int num_nodes, float threshold) {
-
-    __shared__ float bits_set[SHARED_MEM];
-    for(int cur_centroid = blockIdx.x; cur_centroid < num_centroids; cur_centroid += gridDim.x) {
-        // Reset bit distances for this centroid
-        for(int index = threadIdx.x; index < SHARED_MEM; index += blockDim.x)
-            bits_set[index] = 0;
-        centroid_count[cur_centroid] = 0;
-        __syncthreads();
-        for(int i = 0; i < num_nodes; ++i) {
-            int64_t nodeId = index_arr[i];
-            // Find relevant node
-            if(dev_cluster[i] == cur_centroid) {
-                if(threadIdx.x == 0)
-                    centroid_count[cur_centroid]++;
-                __syncthreads();
-                // Compute distance
-                for(int id = threadIdx.x; id < feature_len; id += blockDim.x) {
-                    for(int bit = 0; bit < 32; ++bit) {
-                        if(typecast_feats[nodeId * feature_len + id] & (1 << bit))
-                            bits_set[id * 32 + bit]++;
-                    }
-                }
-            }
-        }
-        __syncthreads();
-        // Compute new masks based on obtained bit distances
-        for(int id = threadIdx.x; id < feature_len; id += blockDim.x) {
-            int32_t val = 0;
-            int32_t masker = 0;
-            for(int bit = 0; bit < 32; ++bit) {
-                if(bits_set[id * 32 + bit] >= threshold * centroid_count[cur_centroid]) {
-                    val |= (1 << bit);
-                    masker |= (1 << bit);
-                } else if(bits_set[id * 32 + bit] <= (1.0 - threshold) * centroid_count[cur_centroid]) {
-                    masker |= (1 << bit);
-                }
-                /*printf("C%d, B%d: %f %f; %f %f; %d %d\n", cur_centroid, id * 32 + bit, 
-                    bits_set[id * 32 + bit],
-                    cur_centroid_num_nodes,
-                    threshold * cur_centroid_num_nodes,
-                    (1.0 - threshold) * cur_centroid_num_nodes, 
-                    bits_set[id * 32 + bit] <= (1.0 - threshold) * cur_centroid_num_nodes,
-                    bits_set[id * 32 + bit] >= threshold * cur_centroid_num_nodes);*/
-            }
-            masks[cur_centroid * feature_len + id] = masker;
-            vals[cur_centroid * feature_len + id] = val;
-        }
-        __syncthreads();
-    }
-}
-
-__global__ void check_feats_many(int32_t *feature_arr, int32_t *index_arr, int num_nodes, int32_t *dev_cluster, 
-        int feature_len, int *masks, int *vals, long long unsigned *count, bool strict) {
-    __shared__ long long unsigned ctr, ctr2;
-    ctr = 0;
-    ctr2 = 0;
-    __syncthreads();
-    for(int i = blockIdx.x; i < num_nodes; i += gridDim.x) {
-        int64_t nodeId = index_arr[i];
-        int clusterId = dev_cluster[i];
-        for(int j = threadIdx.x; j < feature_len; j += blockDim.x) {
-            int32_t val = feature_arr[nodeId * feature_len + j];
-            if((val & masks[clusterId * feature_len + j]) == vals[clusterId * feature_len + j]) {
-                atomicAdd(&ctr, __popc(masks[clusterId * feature_len + j]));
-            }
-            atomicAdd(&ctr2, __popc(masks[clusterId * feature_len + j]));
-        }
-        __syncthreads();\
-        if(threadIdx.x == 0) {
-            // All bits must match!
-            if(strict && ctr == ctr2)
-                atomicAdd(count, ctr);
-            // Relaxed. Enough bits must match to justify the tracking overhead
-            else if(!strict && ctr > feature_len)
-                atomicAdd(count, ctr - feature_len);
-        }
-        __syncthreads();
-        ctr = 0;
-        __syncthreads();
-    }
-}
 
 void comp_decomp_with_single_manager(uint8_t* device_input_ptrs, const size_t input_buffer_len, size_t num_buffers)
 {
@@ -362,73 +76,8 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     //-------------- COMPRESSION CODE ----------
     if(flags & (DYN_COMP | DYN_COMP_CPU | DYN_COMP_TEST)) {
         chunk_size = 4;
-        // Init data structures for future use
-        cudaMalloc(&comp_mask, feature_len * sizeof(int));
-        cudaMalloc(&comp_bitval, feature_len * sizeof(int));
-        int *dev_num_bits;
-        int *mask, *vals;
-        int *h_mask;
-        long long unsigned *count_stuff;
-        long long unsigned *host_count;
-        int *index_arr;
-        // Init all memory needed for compression
-        cudaMalloc(&dev_num_bits, feature_len * 32 * sizeof(int));
-        cudaMalloc(&mask, feature_len * sizeof(int));
-        cudaMalloc(&vals, feature_len * sizeof(int));
-        cudaMallocHost(&h_mask, feature_len * sizeof(int));
-        cudaMalloc(&count_stuff, sizeof(long long unsigned));
-        cudaMallocHost(&host_count, sizeof(long long unsigned));
-        cudaMallocHost(&index_arr, total_nodes * sizeof(int));
-
-        cudaCheckError();
-        // Start logic for compression
-        int32_t *typecast_feats = (int32_t*)cpu_features;
-        cudaCheckError();
-        cudaMemset(dev_num_bits, 0, feature_len * 32 * sizeof(int));
-        cudaCheckError();
-        count_bit_kernel<<<32, 512>>>
-            (typecast_feats, index_array, total_nodes, feature_len, dev_num_bits);
-        cudaDeviceSynchronize();
-        cudaCheckError();
-        double max_comp = 0;
-        printf("Num nodes: %ld\n", total_nodes);
-        for(float threshold = 0.7; threshold <= 1.0; threshold += 0.05) {
-            cudaMemset(mask, 0, feature_len * sizeof(int));
-            cudaMemset(vals, 0, feature_len * sizeof(int));
-            create_mask<<<1, 512>>> (dev_num_bits, mask, vals, feature_len, total_nodes, threshold);
-            cudaMemcpy(h_mask, mask, feature_len * sizeof(int), cudaMemcpyDeviceToHost);
-            cudaCheckError();
-            int popc = 0;
-            for(int i = 0; i < feature_len; ++i) {
-                //printf("%x ", h_mask[i]);
-                popc += __builtin_popcount(h_mask[i]);
-            }
-            //printf("\n");
-            printf("Set bits %d of %d (%f%%)\n", popc, feature_len * 32, (double)(popc) * 100.0 / ((double)feature_len * 32.0));
-            cudaMemset(count_stuff, 0, sizeof(long long unsigned));
-            check_feats<<<32, 512>>> (typecast_feats, index_array, total_nodes, feature_len, mask, vals, count_stuff);
-            cudaMemcpy(host_count, count_stuff, sizeof(long long unsigned), cudaMemcpyDeviceToHost);
-            cudaCheckError();
-            printf("Threshold %f: Single-pass counts: %llu (Total %ld, %.3f%%)\n", threshold, *host_count, 
-                total_nodes * feature_len * 32, (double)*host_count * 100 / (total_nodes * feature_len * 32.0));
-            // Store the mask/value for max compressed format
-            if(*host_count > max_comp) {
-                cudaMemcpy(comp_mask, mask, feature_len * sizeof(float), cudaMemcpyDeviceToDevice);
-                cudaMemcpy(comp_bitval, vals, feature_len * sizeof(float), cudaMemcpyDeviceToDevice);
-                max_comp = *host_count;
-                compress_len = feature_len * (total_nodes * feature_len * 32.0 - *host_count) / (total_nodes * feature_len * 32) + 1;
-
-                printf("Selected threshold %f; compress_len %d\n", threshold, compress_len);
-            }
-        }
-        // Free all memory needed for compression
-        cudaFree(dev_num_bits);
-        cudaFree(mask);
-        cudaFree(vals);
-        cudaFreeHost(h_mask);
-        cudaFree(count_stuff);
-        cudaFreeHost(host_count);
-        cudaFreeHost(index_arr);
+        compress_len = ibp_preproc_data((int32_t*)cpu_features, total_nodes, 
+            feature_len, (int32_t**)&comp_mask, (int32_t**)&comp_bitval);
         printf("Finished compression preprocessing\n");
         fflush(stdout);
 
@@ -439,8 +88,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         // Cache size = num_nodes * (feature_len + key_size * 2 + value_size * 2)
         // Cache size = num_nodes * (feature_len + 6)
         size_t cache_per_gpu = nodes_per_gpu * (feature_len + 6);
-        double est_comp = 1.0 - max_comp / (double)(total_nodes * feature_len * 32.0);
-        size_t comp_nodes_per_gpu = cache_per_gpu / (feature_len * est_comp + 6);
+        size_t comp_nodes_per_gpu = cache_per_gpu / (compress_len + 6);
         this->num_sets = ((comp_nodes_per_gpu * 2 + num_ways - 1) / num_ways) * num_gpus;
         this->cache_capacity = num_sets * num_ways;
         // Cache size = feature capacity + hashmap capacity
@@ -881,11 +529,6 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     if(flags & DYN_COMP_CPU) {
         cudaMalloc(&comp_bitmask, (total_nodes + 31) / 32 * sizeof(int32_t));
         cudaMemset(comp_bitmask, 0, (total_nodes + 31) / 32 * sizeof(int32_t));
-        /*total_nodes = 5;*/
-        //int32_t *comp_cpu_vals, *decomp_cpu_vals;
-        //cudaMallocHost(&comp_cpu_vals, total_nodes * feature_len * sizeof(int32_t));
-        //cudaMallocHost(&decomp_cpu_vals, total_nodes * feature_len * sizeof(int32_t));
-        cudaCheckError();
 
         int32_t *working_space;
         cudaMalloc(&working_space, (1 + 32 * 512 / DWARP_SIZE * feature_len) * sizeof(int32_t));
@@ -894,8 +537,6 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         compressed_cpu_features_kernel<<<32, 512>>>(comp_mask, comp_bitval, (int32_t*)cpu_features, 
              (int32_t*)cpu_features, total_nodes, feature_len, working_space, 
              comp_bitmask, 4, &working_space[32 * 512 / DWARP_SIZE * feature_len]);
-        //decompressed_cpu_features_kernel<<<32, 512>>>(comp_mask, comp_bitval, (int32_t*)comp_cpu_vals, 
-        //    decomp_cpu_vals, total_nodes, feature_len, working_space, comp_bitmask);
         int32_t *host_comp_count;
         cudaMallocHost(&host_comp_count, sizeof(int32_t));
         cudaCheckError();
@@ -904,16 +545,21 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         printf("Compressed %d nodes out of %ld\n", *host_comp_count, total_nodes);
         cudaFreeHost(host_comp_count);
         cudaCheckError();
-        cudaFree(working_space);
-        cudaDeviceSynchronize();
-        cudaCheckError();
         /*
+        // Test if compressed CPU features match when decompressed.
+        int32_t *decomp;
+        cudaMallocHost(&decomp, total_nodes * feature_len * sizeof(int32_t));
+        decompressed_cpu_features_kernel<<<32, 512>>>(comp_mask, comp_bitval, (int32_t*)cpu_features, 
+            decomp, total_nodes, feature_len, working_space, comp_bitmask);
+        cudaDeviceSynchronize();
         int match = true;
         int i = 0;
         for(int j = 0; j < total_nodes; ++j) {
             for(i = 0; i < feature_len; ++i) {
-                if(((int32_t *)cpu_features)[j * feature_len + i] != decomp_cpu_vals[j * feature_len + i]) {
-                    printf("Mishmatch at %d. Expected %x, got %x\n", i, *(unsigned*)&cpu_features[j * feature_len + i], *(unsigned*)&decomp_cpu_vals[j * feature_len + i]);
+                if(((int32_t *)decomp_cpu_vals)[j * feature_len + i] != decomp[j * feature_len + i]) {
+                    printf("Mishmatch at %d, %d. Expected %x, got %x\n", j, i, 
+                        *(unsigned*)&decomp_cpu_vals[j * feature_len + i], 
+                        *(unsigned*)&decomp[j * feature_len + i]);
                     match = false;
                     break;
                 }
@@ -923,7 +569,12 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         }
         printf("Match? %d\n", match);
         fflush(stdout);
-        abort();*/
+        abort();
+        */
+
+        cudaFree(working_space);
+        cudaDeviceSynchronize();
+        cudaCheckError();
     }
 }
 
