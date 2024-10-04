@@ -1,0 +1,3 @@
+[submodule "sampling_server/src/IBP"]
+	path = sampling_server/src/IBP
+	url = git@github.com:AKKamath/IBP.git
