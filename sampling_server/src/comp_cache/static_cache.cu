@@ -711,7 +711,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             (float)*(uint32_t*)host_compressed_bytes / TIME_DIFF(decomp_start, decomp_end));
         cudaMemcpy(host_output_data, device_output_data, in_bytes, cudaMemcpyDeviceToHost);
         cudaCheckError();
-        for(int i = 0; i < in_bytes / sizeof(float); ++i) {
+        for(size_t i = 0; i < in_bytes / sizeof(float); ++i) {
             if(((float*)cpu_features)[i] != ((float*)host_output_data)[i]) {
                 printf("Mismatch at %d: %x vs %x\n", i, ((int32_t*)cpu_features)[i], ((int32_t*)host_output_data)[i]);
                 break;
