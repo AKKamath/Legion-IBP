@@ -9,51 +9,6 @@
 #include "ibp_preproc_host.cuh"
 using namespace nvcomp;
 
-void comp_decomp_with_single_manager(uint8_t* device_input_ptrs, const size_t input_buffer_len, size_t num_buffers)
-{
-    //size_t num_buffers = input_buffer_lengths.size();
-
-    cudaStream_t stream;
-    CUDA_CHECK(cudaStreamCreate(&stream));
-
-    const int chunk_size = 1 << 16;
-    nvcompType_t data_type = NVCOMP_TYPE_CHAR;
-
-    nvcompBatchedLZ4Opts_t format_opts{data_type};
-    LZ4Manager nvcomp_manager{chunk_size, format_opts, stream};
-
-    std::vector<CompressionConfig> comp_configs;
-    comp_configs.reserve(num_buffers);
-
-    std::vector<uint8_t*> comp_result_buffers(num_buffers);
-
-    for(size_t ix_buffer = 0; ix_buffer < num_buffers; ++ix_buffer) {
-        uint8_t* input_data = &device_input_ptrs[ix_buffer * input_buffer_len];
-        size_t input_length = input_buffer_len;//input_buffer_lengths[ix_buffer];
-
-        comp_configs.push_back(nvcomp_manager.configure_compression(input_length));
-        auto& comp_config = comp_configs.back();
-
-        CUDA_CHECK(cudaMalloc(&comp_result_buffers[ix_buffer], comp_config.max_compressed_buffer_size));
-
-        nvcomp_manager.compress(input_data, comp_result_buffers[ix_buffer], comp_config);    
-    }
-
-    std::vector<uint8_t*> decomp_result_buffers(num_buffers);
-    for(size_t ix_buffer = 0; ix_buffer < num_buffers; ++ix_buffer) {
-        auto decomp_config = nvcomp_manager.configure_decompression(comp_configs[ix_buffer]);
-
-        CUDA_CHECK(cudaMalloc(&decomp_result_buffers[ix_buffer], decomp_config.decomp_data_size));
-
-        nvcomp_manager.decompress(decomp_result_buffers[ix_buffer], comp_result_buffers[ix_buffer], decomp_config);    
-    }
-
-    for (size_t ix_buffer = 0; ix_buffer < num_buffers; ++ix_buffer) {
-        CUDA_CHECK(cudaFree(decomp_result_buffers[ix_buffer]));
-        CUDA_CHECK(cudaFree(comp_result_buffers[ix_buffer]));
-    }
-}
-
 void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len, 
                               float *cpu_features, int *index_array, int Kg, 
                               int dev_start, int64_t total_nodes, DYN_FLAGS flags, int ways) {
@@ -99,103 +54,10 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         std::cout << ", new nodes_per_gpu: " << nodes_per_gpu << "\n";
     }
 
-    // K-Means based compression
+    // TODO: K-Means based compression
     if(flags & (DYN_COMP | DYN_COMP_CPU | DYN_COMP_TEST)) {
-        /*
-        int32_t *dev_centroids_count;
-        int *host_centroid_count;
-        int32_t *dev_cluster;
-        int32_t *masks, *multivals;
-        int32_t *dist_vector, *host_vector;
-        int32_t *host_pick, *dev_pick;
-        unsigned num_centroids = 100;
-        cudaMalloc(&dist_vector, nodes_per_gpu * sizeof(int32_t));
-        cudaMallocHost(&host_vector, nodes_per_gpu * sizeof(int32_t));
-        cudaMalloc(&dev_cluster, nodes_per_gpu * sizeof(int32_t));
-        cudaMalloc(&dev_centroids_count, num_centroids * sizeof(int32_t));
-        cudaMallocHost(&host_centroid_count, num_centroids * sizeof(int));
-        cudaMalloc(&masks, num_centroids * feature_len * sizeof(int32_t));
-        cudaMalloc(&multivals, num_centroids * feature_len * sizeof(int32_t));
-        cudaMemset(dev_cluster, 0, nodes_per_gpu * sizeof(int32_t));
-        cudaMemcpy(index_arr, index_array, nodes_per_gpu * sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemset(masks, -1, num_centroids * feature_len * sizeof(int32_t));
-        cudaMemcpy(multivals, &typecast_feats[index_arr[0] * feature_len], feature_len * sizeof(int32_t), cudaMemcpyHostToDevice);
-        cudaCheckError();
-        
-        // K-means++ initialization algorithm
-        for(int i = 1; i < num_centroids; ++i) {
-            calc_distances<<<32, 512>>>(multivals, i, typecast_feats, index_array, nodes_per_gpu, dist_vector, feature_len);
-            pick_max_distance<<<1, 512>>>(dist_vector, nodes_per_gpu, dev_pick);
-            cudaMemcpy(host_pick, dev_pick, sizeof(int32_t), cudaMemcpyDeviceToHost);
-            cudaMemcpy(host_vector, dist_vector, nodes_per_gpu * sizeof(int32_t), cudaMemcpyDeviceToHost);
-            //printf("Picked %d; dist %d\n", *host_pick, host_vector[*host_pick]);
-            int64_t nodeId = index_arr[*host_pick];
-            cudaMemcpy(&multivals[i * feature_len], &typecast_feats[nodeId * feature_len], feature_len * sizeof(int32_t), cudaMemcpyHostToDevice);
-        }
-        cudaCheckError();
-
-        const int ITERS = 00;
-        printf("Iter ");
-        for(int i = 0; i < ITERS; ++i) {
-            printf("%d, ", i);
-            if(i % 20 == 0 && i > 0)
-                printf("\n");
-            cudaMemset(dev_centroids_count, 0, num_centroids * sizeof(int32_t));
-            cudaDeviceSynchronize();
-            classify_nodes<<<32, 512>>>(masks, multivals, num_centroids, typecast_feats, index_array, nodes_per_gpu, dev_cluster, feature_len);
-            create_mask_many<<<50, 512>>> (masks, multivals, num_centroids, dev_centroids_count, typecast_feats, index_array, dev_cluster, feature_len, nodes_per_gpu, 0.9);
-            cudaDeviceSynchronize();
-            cudaCheckError();
-            if(i == 0) {
-                cudaMemcpy(host_centroid_count, dev_centroids_count, num_centroids * sizeof(int), cudaMemcpyDeviceToHost);
-                printf("Before clustering\n");
-                for(int i = 0; i < num_centroids; ++i) {
-                    cudaMemcpy(h_mask, &masks[i * feature_len], feature_len * sizeof(int), cudaMemcpyDeviceToHost);
-                    int popc = 0;
-                    for(int maskId = 0; maskId < feature_len; ++maskId) {
-                        //printf("%x ", h_mask[maskId]);
-                        popc += __builtin_popcount(h_mask[maskId]);
-                    }
-                    if(host_centroid_count[i])
-                        printf("Centroid %d: Set bits %d of %d (%f%%) for %d nodes\n", i, popc, 
-                            feature_len * 32, (double)(popc) * 100.0 / ((double)feature_len * 32.0), host_centroid_count[i]);
-                }
-            }
-        }
-        printf("Finished clustering\n");
-
-        cudaMemcpy(host_centroid_count, dev_centroids_count, num_centroids * sizeof(int), cudaMemcpyDeviceToHost);
-        for(int i = 0; i < num_centroids; ++i) {
-            cudaMemcpy(h_mask, &masks[i * feature_len], feature_len * sizeof(int), cudaMemcpyDeviceToHost);
-            int popc = 0;
-            for(int maskId = 0; maskId < feature_len; ++maskId) {
-                //printf("%x ", h_mask[maskId]);
-                popc += __builtin_popcount(h_mask[maskId]);
-            }
-            if(host_centroid_count[i])
-                printf("Centroid %d: Set bits %d of %d (%f%%) for %d nodes\n", i, popc, 
-                    feature_len * 32, (double)(popc) * 100.0 / ((double)feature_len * 32.0), host_centroid_count[i]);
-        }
-
-        printf("Num nodes: %ld, num_centroids %d\n", nodes_per_gpu, num_centroids);
-        for(float threshold = 0.7; threshold <= 1.0; threshold += 0.05) {
-            cudaMemset(count_stuff, 0, sizeof(long long unsigned));
-            create_mask_many<<<50, 512>>> (masks, multivals, num_centroids, dev_centroids_count, typecast_feats, index_array, dev_cluster, feature_len, nodes_per_gpu, threshold);
-            check_feats_many<<<50, 512>>>(typecast_feats, index_array, nodes_per_gpu, dev_cluster, feature_len, masks, multivals, count_stuff, false);
-            cudaDeviceSynchronize();
-            cudaCheckError();
-            cudaMemcpy(host_count, count_stuff, sizeof(long long unsigned), cudaMemcpyDeviceToHost);
-            printf("KMeans %f: counts %llu (Total %ld, %.3f%%)\n", threshold, *host_count, 
-                nodes_per_gpu * feature_len * 32, (double)*host_count * 100 / (nodes_per_gpu * feature_len * 32.0));
-        }
-        cudaFree(masks);
-        cudaFree(multivals);
-        cudaFree(dev_cluster);
-        cudaFree(dev_centroids_count);
-        cudaFreeHost(host_centroid_count);
-        cudaFree(dist_vector);
-        cudaFreeHost(host_vector);
-        */
+        //ibp_preproc_kmeans((int32_t*)cpu_features, total_nodes, feature_len, 
+        //    (int32_t**)&comp_mask, (int32_t**)&comp_bitval, 0.5, chunk_size);
     }
     
     //------------------------------
