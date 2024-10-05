@@ -109,13 +109,14 @@ public:
         // monitor_->Stop();
         std::vector<uint64_t> counters(2,0); //=  monitor_->GetCounter();
         double t = std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::steady_clock::now() - t1).count();
-
+        t1 = std::chrono::steady_clock::now();
         cache_->CandidateSelection(cache_agg_mode, feature_, graph_);
         cache_->CostModel(cache_agg_mode, feature_, graph_, counters, train_step_);
         cache_->FillUp(cache_agg_mode, feature_, graph_);
         // cache_->HybridInit(feature_, graph_);
+        double t2 = std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::steady_clock::now() - t1).count();
 
-        std::cout<<"Preprocessing cost: "<<t<<" s\n";
+        std::cout<<"Preprocessing cost: "<<t<<" s" << ", cache cost: " << t2 << " s\n";
 
         std::cout<<"System is ready for serving\n";
     }
