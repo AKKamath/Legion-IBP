@@ -45,9 +45,9 @@ public:
         bool is_presc,
         void* stream) = 0;
     
-    virtual void InitializeMap(int node_capacity, int edge_capacity) = 0;
+    virtual void InitializeMap(int node_capacity, int edge_capacity, bool dyn_cache = false) = 0;
 
-    virtual void Insert(int32_t* QT, int32_t* QF, int32_t cache_expand, int32_t Kg) = 0;
+    virtual void Insert(int32_t* QT, int32_t* QF, int32_t cache_expand, int32_t Kg, bool dyn_cache = false) = 0;
     
     virtual void AccessCount(
         int32_t* d_key, 

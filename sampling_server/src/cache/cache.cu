@@ -71,7 +71,7 @@ public:
     }
 
     /*num candidates = sampled num*/
-    void InitializeMap(int node_capacity, int edge_capacity) override
+    void InitializeMap(int node_capacity, int edge_capacity, bool dyn_cache = false) override
     {
         cudaSetDevice(device_idx_);
         node_capacity_ = node_capacity;
@@ -79,8 +79,8 @@ public:
         
         auto invalid_key = CACHEMISS_FLAG;
         auto invalid_value = CACHEMISS_FLAG;
-
-        node_map_ = new bght::bcht<int32_t, int32_t>(int64_t(node_capacity_ * device_count_) * 2, invalid_key, invalid_value);
+        if(!dyn_cache)
+            node_map_ = new bght::bcht<int32_t, int32_t>(int64_t(node_capacity_ * device_count_) * 2, invalid_key, invalid_value);
         cudaCheckError();
 
         edge_index_map_ = new bght::bcht<int32_t, char>(int64_t(edge_capacity_ * device_count_) * 2, invalid_key, invalid_value);
@@ -90,7 +90,7 @@ public:
         cudaCheckError();
     }
 
-    void Insert(int32_t* QT, int32_t* QF, int32_t cache_expand, int32_t Kg) override {
+    void Insert(int32_t* QT, int32_t* QF, int32_t cache_expand, int32_t Kg, bool dyn_cache = false) override {
         cudaSetDevice(device_idx_);
         cudaCheckError();
 
@@ -102,8 +102,10 @@ public:
         cudaStreamCreate(&stream);
         InitPair<<<block_num, thread_num>>>(pair_, QF, node_capacity_, cache_expand, Kg);
         cudaCheckError();
-        node_map_->insert(pair_, (pair_ + node_capacity_ * cache_expand), stream);
-        cudaCheckError();
+        if(!dyn_cache) {
+            node_map_->insert(pair_, (pair_ + node_capacity_ * cache_expand), stream);
+            cudaCheckError();
+        }
         // if(success){
         //     std::cout<<"Feature Cache Successfully Initialized\n";
         // }
@@ -555,6 +557,18 @@ void UnifiedCache::CostModel(int cache_agg_mode, FeatureStorage* feature, GraphS
 }
 
 void UnifiedCache::FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStorage* graph){
+    size_t *cache_size = (size_t*)malloc(sizeof(size_t) * Kc_ * Kg_);
+    for(int32_t i = 0; i < Kc_; i++){
+        for(int32_t j = 0; j < Kg_; j++){
+            int32_t dev_id = i * Kg_ + j;
+            cudaSetDevice(dev_id);
+            size_t free, total;
+            cudaMemGetInfo( &free, &total );
+            std::cout << "GPU " << dev_id << " memory: free=" << free << ", total=" << total << std::endl;
+            cache_size[i * Kg_ + j] = free;
+        }
+    }
+    
     for(int32_t i = 0; i < Kc_; i++){
         int cache_expand;
         if(cache_agg_mode == 0){
@@ -568,19 +582,8 @@ void UnifiedCache::FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStor
         }
         for(int32_t j = 0; j < Kg_; j++){
             cudaSetDevice(i * Kg_ + j);
-            cache_controller_[i * Kg_ + j]->InitializeMap(node_capacity_[i], edge_capacity_[i]);
-            cache_controller_[i * Kg_ + j]->Insert(QT_[i], QF_[i], cache_expand, Kg_);
-        }
-    }
-    size_t *cache_size = (size_t*)malloc(sizeof(size_t) * Kc_ * Kg_);
-    for(int32_t i = 0; i < Kc_; i++){
-        for(int32_t j = 0; j < Kg_; j++){
-            int32_t dev_id = i * Kg_ + j;
-            cudaSetDevice(dev_id);
-            size_t free, total;
-            cudaMemGetInfo( &free, &total );
-            std::cout << "GPU " << dev_id << " memory: free=" << free << ", total=" << total << std::endl;
-            cache_size[i * Kg_ + j] = free;
+            cache_controller_[i * Kg_ + j]->InitializeMap(node_capacity_[i], edge_capacity_[i], dyn_cache);
+            cache_controller_[i * Kg_ + j]->Insert(QT_[i], QF_[i], cache_expand, Kg_, dyn_cache);
         }
     }
 
