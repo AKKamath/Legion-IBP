@@ -148,9 +148,10 @@ void mmap_features_rep_read(std::string &features_file, float* features, int64_t
     const int64_t num_feats_file = buf_len/sizeof(float);
     std::cout<<"Opened file "<<features_file<<" found "<< num_feats_file <<" features; copying to " << num_feats << " features\n";
     fflush(stdout);
-    for(int64_t i = 0; i < num_feats; ++i) {
-      features[i] = buf[i % num_feats_file];
+    for(int i = 0; i < num_feats / num_feats_file; i++) {
+        memcpy(features + i * num_feats_file, buf, buf_len);
     }
+    memcpy(features + (num_feats / num_feats_file) * num_feats_file, buf, (num_feats % num_feats_file) * sizeof(float));
     close(fd);
     return;
 }
