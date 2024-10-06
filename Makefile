@@ -1,4 +1,4 @@
-RESULTS=./results
+RESULTS ?= ./results
 DATASET_PATH=dataset
 
 init:
@@ -21,12 +21,13 @@ DYN_CACHE ?=0
 OTHER_OPTS?=
 NUM_GPUS?=2
 POSTFIX?=
-graphsage: init clean
+FP16 ?= False
+graphsage:
 	$(MAKE) sampling & \
 	bash ./scripts/wait_file.sh ${RESULTS}/${DATASET}/sampling${POSTFIX}.log;
 
 	CUDA_VISIBLE_DEVICES=0,1 stdbuf -oL python training_backend/legion_graphsage.py --class_num ${CLASS_NUM} \
-		--features_num ${FEAT_NUM} --hidden_dim 256 --hops_num 2 --gpu_number ${NUM_GPUS} \
+		--features_num ${FEAT_NUM} --hidden_dim 256 --hops_num 2 --gpu_number ${NUM_GPUS} --float16 ${FP16} \
 		--epoch ${EPOCHS} > ${RESULTS}/${DATASET}/training${POSTFIX}.log
 
 sampling: init clean
@@ -38,17 +39,18 @@ extract_%:
 	python scripts/extract_results.py ${RESULTS} $* "unopt base mod comp cputest opt" > ${RESULTS}/$*.log
 
 extract_expts:
-	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products paper100m" "unopt base mod comp cputest opt"
+	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt base mod comp cputest opt"
 
 extract_comptest:
-	python scripts/extract_compression.py ${RESULTS} "pubmed citeseer cora reddit products paper100m"
+	python scripts/extract_compression.py ${RESULTS} "pubmed citeseer cora reddit products mag paper100m"
 
 run_expts:
-#	$(MAKE) run_reddit_all
-#	$(MAKE) run_products_all
-#	$(MAKE) run_cora_ls_all
+	$(MAKE) run_reddit_all
+	$(MAKE) run_products_all
+	$(MAKE) run_cora_ls_all
 	$(MAKE) run_pubmed_ls_all
 	$(MAKE) run_citeseer_ls_all
+	$(MAKE) run_mag_all
 	$(MAKE) run_paper100m_all
 
 run_comptests:
@@ -58,6 +60,7 @@ run_comptests:
 	$(MAKE) run_pubmed_comptest
 	$(MAKE) run_citeseer_comptest
 	$(MAKE) run_paper100m_comptest
+	$(MAKE) run_mag_comptest
 
 run_%_all:
 	$(MAKE) run_$*_comp
@@ -65,7 +68,7 @@ run_%_all:
 	$(MAKE) run_$*_base
 	$(MAKE) run_$*_mod
 	$(MAKE) run_$*_opt
-	$(MAKE) run_$*_unopt
+	#$(MAKE) run_$*_unopt
 	$(MAKE) extract_$*
 
 # Command to run with dynamic cache
@@ -122,7 +125,7 @@ run_pubmed:
 	$(MAKE) ${EXPT} DATASET=pubmed FEAT_NUM=500 BATCH_SIZE=2048 CLASS_NUM=3 CACHE_SIZE=200000 EPOCHS=500
 
 run_mag:
-	$(MAKE) ${EXPT} DATASET=mag FEAT_NUM=368 CLASS_NUM=153
+	$(MAKE) ${EXPT} DATASET=mag FEAT_NUM=384 CLASS_NUM=153 FP16=True
 
 run_citeseer:
 	$(MAKE) ${EXPT} DATASET=citeseer FEAT_NUM=3703 CLASS_NUM=6 BATCH_SIZE=512 EPOCHS=100 CACHE_SIZE=3800000

@@ -71,10 +71,14 @@ def create_dgl_block(src, dst, num_src_nodes, num_dst_nodes):
 
 total_train_time = 0
 train_batches = 0
-def train_one_step(model, optimizer, loss_fcn, device, feat_len, iter, device_id):
+def train_one_step(model, optimizer, loss_fcn, device, feat_len, iter, device_id, fp16):
     
     ids, features, labels, block1_agg_src, block1_agg_dst, block2_agg_src, block2_agg_dst = ipc_service.get_next(feat_len)
     block1_src_num, block1_dst_num, block2_src_num, block2_dst_num = ipc_service.get_block_size()
+
+    # Typecast fp32 to fp16, then convert back to fp32 for training
+    if fp16:
+        features = features.view(torch.float16).to(torch.float32)
 
     blocks = []
     blocks.append(create_dgl_block(block1_agg_src, block1_agg_dst, block1_src_num, block1_dst_num))
@@ -100,10 +104,14 @@ def train_one_step(model, optimizer, loss_fcn, device, feat_len, iter, device_id
     ipc_service.synchronize()
     return 0
 
-def valid_one_step(model, metric, device, feat_len):
+def valid_one_step(model, metric, device, feat_len, fp16):
     
     ids, features, labels, block1_agg_src, block1_agg_dst, block2_agg_src, block2_agg_dst = ipc_service.get_next(feat_len)
     block1_src_num, block1_dst_num, block2_src_num, block2_dst_num = ipc_service.get_block_size()
+
+    # Typecast fp32 to fp16, then convert back to fp32 for training
+    if fp16:
+        features = features.view(torch.float16).to(torch.float32)
     blocks = []
     blocks.append(create_dgl_block(block1_agg_src, block1_agg_dst, block1_src_num, block1_dst_num))
     blocks.append(create_dgl_block(block2_agg_src, block2_agg_dst, block2_src_num, block2_dst_num))
@@ -120,10 +128,13 @@ def valid_one_step(model, metric, device, feat_len):
     train_batches += 1
     return acc
 
-def test_one_step(model, metric, device, feat_len):
+def test_one_step(model, metric, device, feat_len, fp16):
     
     ids, features, labels, block1_agg_src, block1_agg_dst, block2_agg_src, block2_agg_dst = ipc_service.get_next(feat_len)
     block1_src_num, block1_dst_num, block2_src_num, block2_dst_num = ipc_service.get_block_size()
+    # Typecast fp32 to fp16, then convert back to fp32 for training
+    if fp16:
+        features = features.view(torch.float16).to(torch.float32)
     blocks = []
     blocks.append(create_dgl_block(block1_agg_src, block1_agg_dst, block1_src_num, block1_dst_num))
     blocks.append(create_dgl_block(block2_agg_src, block2_agg_dst, block2_src_num, block2_dst_num))
@@ -145,7 +156,12 @@ def worker_process(rank, world_size, args):
 
     feat_len = args.features_num
 
-    model = SAGE(in_feats=args.features_num,
+    # Multiply by 2 if float16, because each fp32 gets converted to 2 fp16
+    input_len = args.features_num
+    if(args.float16):
+        input_len = args.features_num * 2
+
+    model = SAGE(in_feats=input_len,
                         n_hidden=args.hidden_dim,
                         n_classes=args.class_num,
                         n_layers=args.hops_num,
@@ -170,7 +186,7 @@ def worker_process(rank, world_size, args):
         total_train_time = 0
         train_batches = 0
         for iter in range(train_steps):
-            train_loss = train_one_step(model, optimizer, loss_fcn, cuda_device, feat_len, iter, device_id)
+            train_loss = train_one_step(model, optimizer, loss_fcn, cuda_device, feat_len, iter, device_id, args.float16)
             #if iter % 100 == 0 and iter != 0:
             #    print('Iter {} Batches: {}, avg train time : {} us'.format(iter, train_batches, total_train_time / train_batches / 1000))
             # if device_id == 0:
@@ -187,7 +203,7 @@ def worker_process(rank, world_size, args):
             total_train_time = 0
             train_batches = 0
             for iter in range(valid_steps):
-                valid_one_step(model, metric, cuda_device, feat_len)
+                valid_one_step(model, metric, cuda_device, feat_len, args.float16)
                 #if iter % 100 == 0 and iter != 0:
                 #    print('Iter {} Batches: {}, avg valid time : {} us'.format(iter, train_batches, total_train_time / train_batches / 1000))
             # if device_id == 0:
@@ -206,7 +222,7 @@ def worker_process(rank, world_size, args):
     model.metric = metric
     with torch.no_grad():
         for iter in range(test_steps):
-            test_one_step(model, metric, cuda_device, feat_len)
+            test_one_step(model, metric, cuda_device, feat_len, args.float16)
         acc = metric.compute()
     if device_id == 0:
         print("Accuracy on test data: {}".format(acc))
@@ -233,6 +249,7 @@ if __name__ == "__main__":
     argparser.add_argument('--learning_rate', type=float, default=0.003)
     argparser.add_argument('--epoch', type=int, default=2)
     argparser.add_argument('--gpu_number', type=int, default=2)
+    argparser.add_argument('--float16', type=bool, default=False)
     args = argparser.parse_args()
 
     world_size = args.gpu_number
