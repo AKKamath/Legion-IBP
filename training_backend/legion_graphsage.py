@@ -9,6 +9,8 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
 import torch.multiprocessing as mp
+from torch.amp import autocast
+from torch.cuda.amp import GradScaler
 
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.nn.functional as Func
@@ -63,11 +65,21 @@ class SAGE(nn.Module):
                 h = self.dropout(h)
         return h
 
-def create_dgl_block(src, dst, num_src_nodes, num_dst_nodes):
+def create_dgl_block(src, dst, num_src_nodes, num_dst_nodes, fp16):
     gidx = dgl.heterograph_index.create_unitgraph_from_coo(2, num_src_nodes, num_dst_nodes, src, dst, 'coo', row_sorted=True)
     g = DGLBlock(gidx, (['_N'], ['_N']), ['_E'])
 
+    # Convert format for fp16 training
+    if fp16:
+        g = g.formats(['coo', 'csc'])
+        g.create_formats_()
     return g
+scaler = GradScaler()
+
+def backward(scaler, loss, optimizer):
+    scaler.scale(loss).backward()
+    scaler.step(optimizer)
+    scaler.update()
 
 total_train_time = 0
 train_batches = 0
@@ -76,23 +88,28 @@ def train_one_step(model, optimizer, loss_fcn, device, feat_len, iter, device_id
     ids, features, labels, block1_agg_src, block1_agg_dst, block2_agg_src, block2_agg_dst = ipc_service.get_next(feat_len)
     block1_src_num, block1_dst_num, block2_src_num, block2_dst_num = ipc_service.get_block_size()
 
-    # Typecast fp32 to fp16, then convert back to fp32 for training
+    data_type = torch.float32
+    # Typecast fp32 to fp16
     if fp16:
-        features = features.view(torch.float16).to(torch.float32)
-
+        features = features.view(torch.float16)
+        data_type = torch.float16
     blocks = []
-    blocks.append(create_dgl_block(block1_agg_src, block1_agg_dst, block1_src_num, block1_dst_num))
-    blocks.append(create_dgl_block(block2_agg_src, block2_agg_dst, block2_src_num, block2_dst_num))
+    blocks.append(create_dgl_block(block1_agg_src, block1_agg_dst, block1_src_num, block1_dst_num, fp16))
+    blocks.append(create_dgl_block(block2_agg_src, block2_agg_dst, block2_src_num, block2_dst_num, fp16))
     # print(features[:100])
     # print(ids[:100])
     start = time.perf_counter_ns()
-    #print("Timestamp {:d}, sample {:d}, worker {:d}, system {:s}, {:s}".format(time.time_ns(), iter, device_id, "trainer", "getsample"))
-    batch_pred = model(blocks, features)
-    long_labels = torch.as_tensor(labels, dtype=torch.long, device=device)
-    loss = loss_fcn(batch_pred, long_labels)
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+    with autocast('cuda', enabled=fp16, dtype=data_type):
+        #print("Timestamp {:d}, sample {:d}, worker {:d}, system {:s}, {:s}".format(time.time_ns(), iter, device_id, "trainer", "getsample"))
+        batch_pred = model(blocks, features)
+        long_labels = torch.as_tensor(labels, dtype=torch.long, device=device)
+        loss = loss_fcn(batch_pred, long_labels)
+    if fp16:
+        backward(scaler, loss, optimizer)
+    else:
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
     
     torch.cuda.synchronize()
     end = time.perf_counter_ns()    
@@ -109,14 +126,17 @@ def valid_one_step(model, metric, device, feat_len, fp16):
     ids, features, labels, block1_agg_src, block1_agg_dst, block2_agg_src, block2_agg_dst = ipc_service.get_next(feat_len)
     block1_src_num, block1_dst_num, block2_src_num, block2_dst_num = ipc_service.get_block_size()
 
-    # Typecast fp32 to fp16, then convert back to fp32 for training
+    data_type = torch.float32
+    # Typecast fp32 to fp16
     if fp16:
-        features = features.view(torch.float16).to(torch.float32)
+        features = features.view(torch.float16)
+        data_type = torch.float16
     blocks = []
-    blocks.append(create_dgl_block(block1_agg_src, block1_agg_dst, block1_src_num, block1_dst_num))
-    blocks.append(create_dgl_block(block2_agg_src, block2_agg_dst, block2_src_num, block2_dst_num))
+    blocks.append(create_dgl_block(block1_agg_src, block1_agg_dst, block1_src_num, block1_dst_num, fp16))
+    blocks.append(create_dgl_block(block2_agg_src, block2_agg_dst, block2_src_num, block2_dst_num, fp16))
     start = time.perf_counter_ns()
-    batch_pred = model(blocks, features)
+    with autocast('cuda', enabled=fp16, dtype=data_type):
+        batch_pred = model(blocks, features)
     long_labels = torch.as_tensor(labels, dtype=torch.long, device=device)
     batch_pred = torch.softmax(batch_pred, dim=1).to(device)
     acc = metric(batch_pred, long_labels)
@@ -132,15 +152,18 @@ def test_one_step(model, metric, device, feat_len, fp16):
     
     ids, features, labels, block1_agg_src, block1_agg_dst, block2_agg_src, block2_agg_dst = ipc_service.get_next(feat_len)
     block1_src_num, block1_dst_num, block2_src_num, block2_dst_num = ipc_service.get_block_size()
-    # Typecast fp32 to fp16, then convert back to fp32 for training
+    data_type = torch.float32
+    # Typecast fp32 to fp16
     if fp16:
-        features = features.view(torch.float16).to(torch.float32)
+        features = features.view(torch.float16)
+        data_type = torch.float16
     blocks = []
-    blocks.append(create_dgl_block(block1_agg_src, block1_agg_dst, block1_src_num, block1_dst_num))
-    blocks.append(create_dgl_block(block2_agg_src, block2_agg_dst, block2_src_num, block2_dst_num))
-    batch_pred = model(blocks, features)
-    long_labels = torch.as_tensor(labels, dtype=torch.long, device=device)
-    batch_pred = torch.softmax(batch_pred, dim=1).to(device)
+    blocks.append(create_dgl_block(block1_agg_src, block1_agg_dst, block1_src_num, block1_dst_num, fp16))
+    blocks.append(create_dgl_block(block2_agg_src, block2_agg_dst, block2_src_num, block2_dst_num, fp16))
+    with autocast('cuda', enabled=fp16, dtype=data_type):
+        batch_pred = model(blocks, features)
+        long_labels = torch.as_tensor(labels, dtype=torch.long, device=device)
+        batch_pred = torch.softmax(batch_pred, dim=1).to(device)
     acc = metric(batch_pred, long_labels)
     ipc_service.synchronize()
     return acc
@@ -249,9 +272,12 @@ if __name__ == "__main__":
     argparser.add_argument('--learning_rate', type=float, default=0.003)
     argparser.add_argument('--epoch', type=int, default=2)
     argparser.add_argument('--gpu_number', type=int, default=2)
-    argparser.add_argument('--float16', type=bool, default=False)
+    argparser.add_argument('--float16', type=str, default=False)
     args = argparser.parse_args()
-
+    if args.float16 == "True":
+        args.float16 = True
+    else:
+        args.float16 = False
     world_size = args.gpu_number
 
     run_distribute(worker_process, world_size, args)
