@@ -44,10 +44,10 @@ sampling: init clean
 		--cache_memory ${CACHE_SIZE} --dyn_cache ${DYN_CACHE} ${OTHER_OPTS} > ${RESULTS}/${DATASET}/sampling${POSTFIX}.log
 
 extract_%:
-	python scripts/extract_results.py ${RESULTS} $* "unopt base mod comp cputest opt" > ${RESULTS}/$*.log
+	python scripts/extract_results.py ${RESULTS} $* "unopt dgl base mod comp cputest opt" > ${RESULTS}/$*.log
 
 extract_expts:
-	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt base mod comp cputest opt"
+	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt dgl base mod comp cputest opt"
 
 extract_comptest:
 	python scripts/extract_compression.py ${RESULTS} "pubmed citeseer cora reddit products mag paper100m"
@@ -74,6 +74,7 @@ run_%_all:
 	$(MAKE) run_$*_comp
 	$(MAKE) run_$*_cputest
 	$(MAKE) run_$*_base
+	$(MAKE) run_$*_dgl
 	$(MAKE) run_$*_mod
 	$(MAKE) run_$*_opt
 	#$(MAKE) run_$*_unopt
