@@ -129,10 +129,13 @@ void mmap_features_read(std::string &features_file, float* features){
         std::cout<<"cannout open file: "<<features_file<<"\n";
     }
     int64_t buf_len = lseek(fd, 0, SEEK_END);
+    //lseek(fd, 0, SEEK_SET);
     const float *buf = (float *)mmap(NULL, buf_len, PROT_READ, MAP_PRIVATE, fd, 0);
     const float* buf_end = buf + buf_len/sizeof(float);
+    //read(fd, features, buf_len);
     std::cout<<"Opened file "<<features_file<<" found "<< buf_len/sizeof(float) <<" features\n";
     memcpy(features, buf, buf_len);
+    munmap((void *)buf, buf_len);
     close(fd);
     return;
 }
