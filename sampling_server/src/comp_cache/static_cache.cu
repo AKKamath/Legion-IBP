@@ -223,7 +223,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         cudaCheckError();
         for(size_t i = 0; i < in_bytes / sizeof(float); ++i) {
             if(((float*)cpu_features)[i] != ((float*)host_output_data)[i]) {
-                printf("Mismatch at %d: %x vs %x\n", i, ((int32_t*)cpu_features)[i], ((int32_t*)host_output_data)[i]);
+                printf("Mismatch at %lu: %x vs %x\n", i, ((int32_t*)cpu_features)[i], ((int32_t*)host_output_data)[i]);
                 break;
             }
         }
@@ -287,13 +287,13 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
         if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t)) {
             shmem_size = 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t);
-            printf("Have enough shmem (alloc = %d, maxshmem = %d, feat_len = %d, required = %d)\n", 
+            printf("Have enough shmem (alloc = %d, maxshmem = %d, feat_len = %d, required = %lu)\n", 
                 shmem_size, maxShmem[0], feature_len, 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t));
             kernel2 = &test_decompressed_features_kernel2<true>;
         }
         else {
             shmem_size = maxShmem[0]; //256 / 32 * 96 * sizeof(int32_t);
-            printf("Not enough shmem (alloc = %d, maxshmem = %d, feat_len = %d, required = %d)\n", 
+            printf("Not enough shmem (alloc = %d, maxshmem = %d, feat_len = %d, required = %lu)\n", 
                 shmem_size, maxShmem[0], feature_len, 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t));
             kernel2 = &test_decompressed_features_kernel2<false>;
         }
