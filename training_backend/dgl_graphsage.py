@@ -165,23 +165,26 @@ def test_one_step(model, metric, device, feat_len, blocks, fp16):
 
 def worker_process(rank, world_size, args, g_data):
     print(f"Running GNN Training on CUDA {rank}.")
-    g, features, labels, train_idx, val_idx, test_idx = g_data
-    
-    
-    train_idx = train_idx.split((train_idx.shape[0] + world_size - 1) // world_size)[rank]
-    val_idx = val_idx.split((val_idx.shape[0] + world_size - 1) // world_size)[rank]
-    test_idx = test_idx.split((test_idx.shape[0] + world_size - 1) // world_size)[rank]
+    g, train_idx_split, val_idx_split, test_idx_split, \
+        train_step, valid_step, test_step = g_data
 
-    print(train_idx.shape, val_idx.shape, test_idx.shape)
+    train_idx = train_idx_split[rank]
+    val_idx = val_idx_split[rank]
+    test_idx = test_idx_split[rank]
+    #train_idx = train_idx.split((train_idx.shape[0] + world_size - 1) // world_size)[rank]
+    #val_idx = val_idx.split((val_idx.shape[0] + world_size - 1) // world_size)[rank]
+    #test_idx = test_idx.split((test_idx.shape[0] + world_size - 1) // world_size)[rank]
+    valid_batch_size = (((val_idx.shape[0] - 1)//valid_step + 1))
+    test_batch_size = ((test_idx.shape[0] - 1)//test_step + 1)
 
     device_id = rank
     setup(rank, world_size)
     cuda_device = torch.device("cuda:{}".format(device_id))
     torch.cuda.set_device(cuda_device)
-    train_steps, valid_steps, test_steps = (train_idx.shape[0] + args.train_batch_size) // args.train_batch_size, \
-        (val_idx.shape[0] + 511) // 512, (test_idx.shape[0] + 511) // 512
+    #train_steps, valid_steps, test_steps = (train_idx.shape[0] + args.train_batch_size) // args.train_batch_size, \
+    #    (val_idx.shape[0] + 511) // 512, (test_idx.shape[0] + 511) // 512
 
-    print(train_steps, valid_steps, test_steps)
+    #print(train_steps, valid_steps, test_steps)
 
     sampler = NeighborSampler(
         args.nbrs_num,  # fanout for [layer-0, layer-1, layer-2]
@@ -205,7 +208,7 @@ def worker_process(rank, world_size, args, g_data):
         val_idx,
         sampler,
         device=cuda_device,
-        batch_size=512,
+        batch_size=valid_batch_size,
         shuffle=False,
         drop_last=False,
         num_workers=0,
@@ -217,7 +220,7 @@ def worker_process(rank, world_size, args, g_data):
         test_idx,
         sampler,
         device=cuda_device,
-        batch_size=512,
+        batch_size=test_batch_size,
         shuffle=False,
         drop_last=False,
         num_workers=0,
@@ -260,6 +263,8 @@ def worker_process(rank, world_size, args, g_data):
         ):
             #print(output_nodes)
             train_loss = train_one_step(model, optimizer, loss_fcn, cuda_device, feat_len, blocks, args.float16)
+            if it >= train_step:
+                break
             #if iter % 100 == 0 and iter != 0:
             #    print('Iter {} Batches: {}, avg train time : {} us'.format(iter, train_batches, total_train_time / train_batches / 1000))
             # if device_id == 0:
@@ -279,6 +284,8 @@ def worker_process(rank, world_size, args, g_data):
                 val_dataloader
             ):
                 valid_one_step(model, metric, cuda_device, feat_len, blocks, args.float16)
+                if it >= valid_step:
+                    break
                 #if iter % 100 == 0 and iter != 0:
                 #    print('Iter {} Batches: {}, avg valid time : {} us'.format(iter, train_batches, total_train_time / train_batches / 1000))
             # if device_id == 0:
@@ -300,6 +307,8 @@ def worker_process(rank, world_size, args, g_data):
             test_dataloader
         ):
             test_one_step(model, metric, cuda_device, feat_len, blocks, args.float16)
+            if it >= test_step:
+                break
         acc = metric.compute()
     if device_id == 0:
         print("Accuracy on test data: {}".format(acc))
@@ -342,7 +351,32 @@ if __name__ == "__main__":
     import load_graph
     g, features, labels, train_idx, val_idx, test_idx = \
         load_graph.load(args.dataset_path, args.dataset_name)
+    train_idx_split = []
+    val_idx_split = []
+    test_idx_split = []
+    # Splitting followed by Legion's data loader
+    for rank in range(world_size):
+        mask = (train_idx % world_size == rank)
+        train_idx_split.append(train_idx[mask])
 
-    graph_data = g, features, labels, train_idx, val_idx, test_idx
+        mask = (val_idx % world_size == rank)
+        val_idx_split.append(val_idx[mask])
+
+        mask = (test_idx % world_size == rank)
+        test_idx_split.append(test_idx[mask])
+
+    min_train_size = min([len(x) for x in train_idx_split])
+    train_step = (min_train_size - 1) // args.train_batch_size
+
+    max_valid_size = max([len(x) for x in val_idx_split])
+    valid_step = (max_valid_size - 1) // 512 + 1
+
+    max_test_size = max([len(x) for x in test_idx_split])
+    test_step = (max_test_size - 1) // 512 + 1
+
+    print("Train step: {}, Valid step: {}, Test step: {}".format(train_step, valid_step, test_step))
+
+    graph_data = g, train_idx_split, val_idx_split, test_idx_split, \
+        train_step, valid_step, test_step
     #TODO: Divide among executing GPUs
     run_distribute(worker_process, world_size, args, graph_data)
