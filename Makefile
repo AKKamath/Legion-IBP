@@ -11,10 +11,10 @@ clean:
 	-pkill *sampling_server
 	sleep 5
 
-DATASET ?=paper100m
+DATASET ?=reddit
 BATCH_SIZE ?=8192
-FEAT_NUM ?=128
-CLASS_NUM ?=172
+FEAT_NUM ?=602
+CLASS_NUM ?=50
 EPOCHS ?=10
 CACHE_SIZE ?=38000000
 DYN_CACHE ?=0
@@ -22,6 +22,14 @@ OTHER_OPTS?=
 NUM_GPUS?=2
 POSTFIX?=
 FP16 ?= False
+
+dgl_graphsage:
+	CUDA_VISIBLE_DEVICES=0,1 stdbuf -oL python training_backend/dgl_graphsage.py \
+		--dataset_path '${DATASET_PATH}' --dataset_name ${DATASET} --class_num ${CLASS_NUM} \
+		--train_batch_size ${BATCH_SIZE} --cache_memory ${CACHE_SIZE} \
+		--features_num ${FEAT_NUM} --hidden_dim 256 --hops_num 2 --gpu_number ${NUM_GPUS} --float16 ${FP16} \
+		--epoch ${EPOCHS} > ${RESULTS}/${DATASET}/training${POSTFIX}_dgl.log
+
 graphsage:
 	$(MAKE) sampling & \
 	bash ./scripts/wait_file.sh ${RESULTS}/${DATASET}/sampling${POSTFIX}.log;
@@ -32,7 +40,7 @@ graphsage:
 
 sampling: init clean
 	stdbuf -oL python legion_server.py --dataset_path '${DATASET_PATH}' --dataset_name ${DATASET} \
-		--train_batch_size ${BATCH_SIZE} --fanout [25,10] --gpu_number ${NUM_GPUS} --epoch ${EPOCHS} \
+		--train_batch_size ${BATCH_SIZE} --gpu_number ${NUM_GPUS} --epoch ${EPOCHS} \
 		--cache_memory ${CACHE_SIZE} --dyn_cache ${DYN_CACHE} ${OTHER_OPTS} > ${RESULTS}/${DATASET}/sampling${POSTFIX}.log
 
 extract_%:
@@ -103,6 +111,9 @@ run_%_all:
 
 %_cputest:
 	$(MAKE) $* DYN_CACHE=280 POSTFIX=_cputest${POSTFIX}
+
+%_dgl:
+	$(MAKE) $* EXPT=dgl_graphsage
  
 EXPT=graphsage
 # Individual experiment commands
