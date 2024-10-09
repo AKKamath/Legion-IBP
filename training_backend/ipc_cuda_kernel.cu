@@ -220,11 +220,11 @@ std::vector<torch::Tensor> cuda_get_next(
 
     for(int i = hop_num; i > 0; i--){
       torch::Tensor agg_src_tensor = torch::from_blob(
-        agg_src,
+        &agg_src[h_edge_counter[INTRABATCH_CON * 4 + i]],
           {(long long)h_edge_counter[INTRABATCH_CON * 3 + i]},
           torch::TensorOptions().dtype(torch::kI32).device(device));
       torch::Tensor agg_dst_tensor = torch::from_blob(
-        agg_dst,
+        &agg_dst[h_edge_counter[INTRABATCH_CON * 4 + i]],
           {(long long)h_edge_counter[INTRABATCH_CON * 3 + i]},
           torch::TensorOptions().dtype(torch::kI32).device(device));
       ret.push_back(agg_src_tensor);

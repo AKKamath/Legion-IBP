@@ -5,6 +5,7 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <random>
+#include <assert.h>
 
 #include <thrust/random/uniform_int_distribution.h>
 #include <thrust/random/linear_congruential_engine.h>
@@ -79,7 +80,8 @@ __global__ void counter_update(
 		//hop1 start (0 0 0), hop2 start (0 B1 0), hop3 start (B1 B2 0)
 		//hop1 done (0 B1 0), hop2 done (B1 B2 0), hop3 done (B1+B2 B3 0)
 		node_counter[INTRABATCH_CON * 3 + (op_id / INTRABATCH_CON)] = node_counter[0] + node_counter[1];
-		edge_counter[INTRABATCH_CON * 3 + (op_id / INTRABATCH_CON)] = edge_counter[0] + edge_counter[1];	
+		edge_counter[INTRABATCH_CON * 3 + (op_id / INTRABATCH_CON)] = edge_counter[1];	
+		edge_counter[INTRABATCH_CON * 4 + (op_id / INTRABATCH_CON)] = edge_counter[0];	
 	}else if(op_id % INTRABATCH_CON > 0){
 		node_counter[(op_id % INTRABATCH_CON) * 2] = node_counter[0];										
 		node_counter[(op_id % INTRABATCH_CON) * 2 + 1] = node_counter[1];	
@@ -199,14 +201,15 @@ __global__ void random_sample(
 	__shared__ int32_t local_offset[4];
 	int32_t* input_ids = nullptr;
 	int32_t batch_size = 0;
-	if(op_id == INTRABATCH_CON){
+	//if(op_id == INTRABATCH_CON){
 		input_ids = sampled_ids;
-		batch_size = node_counter[1];
-	}else if(op_id > INTRABATCH_CON){
+		batch_size = node_counter[0] + node_counter[1];
+	/*}else if(op_id > INTRABATCH_CON){
 		input_ids = agg_src_ids + edge_counter[0];
 		batch_size = edge_counter[1];
-	}
-	for(int32_t idx = threadIdx.x + blockDim.x * blockIdx.x; idx < batch_size * count; idx += gridDim.x * blockDim.x){
+	}*/
+	int warp_id = (threadIdx.x + blockDim.x * blockIdx.x) / 32;
+	for(int32_t input = warp_id; input < batch_size; input += gridDim.x * blockDim.x / 32){
 		if(threadIdx.x == 0){
             local_offset[0] = 0;
 			local_offset[1] = 0;
@@ -214,12 +217,12 @@ __global__ void random_sample(
             local_offset[3] = 0;
         }
         __syncthreads();
-		int32_t sample_src_id = input_ids[idx/count];
+		int32_t sample_src_id = input_ids[input];
 		int32_t sample_dst_id;
 		if(sample_src_id >= 0){
-			int32_t neighbor_offset = idx%count;
-			int32_t part_id = partition_index[idx/count];
-			int32_t part_offset = parition_offset[idx/count];
+			int32_t neighbor_offset = threadIdx.x % 32;
+			int32_t part_id = partition_index[input];
+			int32_t part_offset = parition_offset[input];
 			int64_t start_index;
 			int32_t col_size;
 			if(part_id < 0){
@@ -230,13 +233,30 @@ __global__ void random_sample(
 				col_size = csr_node_index[part_id][(part_offset + 1)] - start_index;
 			}
 
-			if(neighbor_offset >= col_size){
+			if(neighbor_offset >= col_size || neighbor_offset >= count){
 				sample_dst_id = -1;
 			}else{
-				thrust::minstd_rand engine;
-				engine.discard(idx);
-				thrust::uniform_int_distribution<> dist(0, col_size - 1);
-				int32_t dst_index = dist(engine);
+				int32_t dst_index;
+				// Not enough edges, no need for randomness
+				if(col_size <= count)
+					dst_index = neighbor_offset;
+				else {
+					thrust::minstd_rand engine;
+					engine.discard(threadIdx.x * 17);
+					thrust::uniform_int_distribution<> dist(0, col_size - 1);
+					bool pick = true;
+					bool repeat = true;
+					// Avoid duplicate edge selections
+					const unsigned MASK = (1ul << count) - 1ul;
+					for(int iters = 0; repeat == true && iters < 10; ++iters) {
+						unsigned matches = 0;
+						if(pick)
+							dst_index = dist(engine);
+						matches = __match_any_sync(MASK, dst_index);
+						pick = (__ffs(matches) - 1) != neighbor_offset;
+						repeat = __ballot_sync(MASK, __popc(matches) > 1);
+					}
+				}
 				if(part_id < 0){
 					sample_dst_id = csr_dst_node_ids[partition_count][(int64_t(start_index + int64_t(dst_index)))];
 				}else{
@@ -452,17 +472,18 @@ void RandomSample(
 
 		int32_t* input_ids = nullptr;
 		int32_t batch_size = 0;
-		if(op_id == INTRABATCH_CON){
+		//if(op_id == INTRABATCH_CON){
 			input_ids = sampled_ids;
-			batch_size = h_node_counter[1];
-		}else if(op_id > INTRABATCH_CON){
-			input_ids = agg_src_ids + h_edge_counter[0];
-			batch_size = h_edge_counter[1];
-		}
+			batch_size = h_node_counter[1] + h_node_counter[0];
+		//}else if(op_id > INTRABATCH_CON){
+		//	input_ids = agg_src_ids + h_edge_counter[0];
+		//	batch_size = h_edge_counter[1];
+		//}
 		cache -> FindTopo(input_ids, tmp_partition_index, tmp_parition_offset, batch_size, op_id, strm_hdl, dev_id);
 		cudaCheckError();
 		free(h_node_counter);
 		free(h_edge_counter);
+		assert(count <= 32 && "Neighbor count must be less than 32!");
 		random_sample<<<block_num, thread_num, 0, (strm_hdl)>>>(sampled_ids, op_id, csr_node_index, csr_dst_node_ids, 
 																											tmp_partition_index, tmp_parition_offset,
 																											count, partition_count,
