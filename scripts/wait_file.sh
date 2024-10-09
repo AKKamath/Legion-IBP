@@ -1,5 +1,5 @@
 #!/bin/bash
-
+sleep 10
 while [[ $( grep "ready for serving" $1 ) == "" ]]
 do
         sleep 1
