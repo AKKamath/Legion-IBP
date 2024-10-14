@@ -94,6 +94,8 @@ def load(dataset_path, dataset_name):
     features = features.reshape((vertices_num, features_dim))
     print("Modded feats")
     g = dgl.graph(('csr', (csr_node_index, csr_dst_ids, [])))
+    # Reverse graph as DGL uses "in" edges for sampling, while Legion uses "out"
+    g = dgl.reverse(g, copy_edata=False, copy_ndata=False)
     g.ndata["feat"] = features
     g.ndata["label"] = labels
     print("Setup graph")
