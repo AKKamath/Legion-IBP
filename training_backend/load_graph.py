@@ -47,10 +47,6 @@ def load(dataset_path, dataset_name):
         testing_path,
         dtype="int32",
     )
-    labels = np.fromfile(
-        labels_path,
-        dtype="int32",
-    )
 
     training_ids = torch.from_numpy(training_ids)
     training_ids = training_ids.type(torch.int64).share_memory_().pin_memory()
@@ -58,10 +54,19 @@ def load(dataset_path, dataset_name):
     validation_ids = validation_ids.type(torch.int64).share_memory_().pin_memory()
     testing_ids = torch.from_numpy(testing_ids)
     testing_ids = testing_ids.type(torch.int64).share_memory_().pin_memory()
-    labels = torch.from_numpy(labels).share_memory_().pin_memory()
     
     print("Loaded all here")
     if feat_dataset_file != "":
+        labels_path = feat_dataset_file + "labels"
+        # Get new labels
+        labels_copy = np.fromfile(
+            labels_path,
+            dtype="int32",
+        )
+        # Copy labels into main graph
+        labels = np.tile(labels_copy, (vertices_num // labels_copy.shape[0]))
+        labels = np.append(labels, labels_copy[:(vertices_num) % labels_copy.shape[0]])
+        labels = torch.from_numpy(labels).share_memory_().pin_memory()
         features_path = feat_dataset_file + "features"
         features_copy = np.fromfile(
             features_path,
@@ -71,6 +76,12 @@ def load(dataset_path, dataset_name):
         features = np.tile(features_copy, (vertices_num * features_dim // features_copy.shape[0]))
         features = np.append(features, features_copy[:(vertices_num * features_dim) % features_copy.shape[0]])
     else:
+        labels = np.fromfile(
+            labels_path,
+            dtype="int32",
+        )
+        labels = torch.from_numpy(labels).share_memory_().pin_memory()
+
         features = np.fromfile(
             features_path,
             dtype="float32",
