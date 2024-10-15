@@ -128,11 +128,11 @@ void mmap_features_read(std::string &features_file, float* features){
     if(fd == -1){
         std::cout<<"cannout open file: "<<features_file<<"\n";
     }
-    int64_t buf_len = lseek(fd, 0, SEEK_END);
+    size_t buf_len = lseek(fd, 0, SEEK_END);
     //lseek(fd, 0, SEEK_SET);
     const float *buf = (float *)mmap(NULL, buf_len, PROT_READ, MAP_PRIVATE, fd, 0);
     const float* buf_end = buf + buf_len/sizeof(float);
-    //read(fd, features, buf_len);
+    //size_t bytes_read = read(fd, features, buf_len);
     std::cout<<"Opened file "<<features_file<<" found "<< buf_len/sizeof(float) <<" features\n";
     memcpy(features, buf, buf_len);
     munmap((void *)buf, buf_len);
@@ -155,6 +155,7 @@ void mmap_features_rep_read(std::string &features_file, float* features, int64_t
         memcpy(features + i * num_feats_file, buf, buf_len);
     }
     memcpy(features + (num_feats / num_feats_file) * num_feats_file, buf, (num_feats % num_feats_file) * sizeof(float));
+    munmap((void *)buf, buf_len);
     close(fd);
     return;
 }
