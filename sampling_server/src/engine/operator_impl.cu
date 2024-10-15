@@ -346,14 +346,15 @@ __global__ void pre_sample(
 	__shared__ int32_t local_offset[4];
 	int32_t* input_ids = nullptr;
 	int32_t batch_size = 0;
-	if(op_id == INTRABATCH_CON){
+	//if(op_id == INTRABATCH_CON){
 		input_ids = sampled_ids;
-		batch_size = node_counter[1];
-	}else if(op_id > INTRABATCH_CON){
+		batch_size = node_counter[0] + node_counter[1];
+	/*}else if(op_id > INTRABATCH_CON){
 		input_ids = agg_src_ids + edge_counter[0];
 		batch_size = edge_counter[1];
-	}
-	for(int32_t idx = threadIdx.x + blockDim.x * blockIdx.x; idx < batch_size * count; idx += gridDim.x * blockDim.x){
+	}*/
+	int warp_id = (threadIdx.x + blockDim.x * blockIdx.x) / 32;
+	for(int32_t input = warp_id; input < batch_size; input += gridDim.x * blockDim.x / 32) {
 		if(threadIdx.x == 0){
             local_offset[0] = 0;
 			local_offset[1] = 0;
@@ -361,19 +362,36 @@ __global__ void pre_sample(
             local_offset[3] = 0;
         }
         __syncthreads();
-		int32_t sample_src_id = input_ids[idx/count];
+		int32_t sample_src_id = input_ids[input];
 		int32_t sample_dst_id;
 		if(sample_src_id >= 0){
-			int32_t neighbor_offset = idx%count;
+			int32_t neighbor_offset = threadIdx.x % 32;
 			int64_t start_index = csr_node_index[sample_src_id];
 			int32_t col_size = csr_node_index[(sample_src_id + 1)] - start_index;
-			if(neighbor_offset >= col_size){
+			if(neighbor_offset >= col_size || neighbor_offset >= count){
 				sample_dst_id = -1;
 			}else{
-				thrust::minstd_rand engine;
-				engine.discard(idx);
-				thrust::uniform_int_distribution<> dist(0, col_size - 1);
-				int32_t dst_index = dist(engine);
+				int32_t dst_index;
+				// Not enough edges, no need for randomness
+				if(col_size <= count)
+					dst_index = neighbor_offset;
+				else {
+					thrust::minstd_rand engine;
+					engine.discard(threadIdx.x * 17);
+					thrust::uniform_int_distribution<> dist(0, col_size - 1);
+					bool pick = true;
+					bool repeat = true;
+					// Avoid duplicate edge selections
+					const unsigned MASK = (1ul << count) - 1ul;
+					for(int iters = 0; repeat == true && iters < 10; ++iters) {
+						unsigned matches = 0;
+						if(pick)
+							dst_index = dist(engine);
+						matches = __match_any_sync(MASK, dst_index);
+						pick = (__ffs(matches) - 1) != neighbor_offset;
+						repeat = __ballot_sync(MASK, __popc(matches) > 1);
+					}
+				}
 				sample_dst_id = csr_dst_node_ids[(int64_t(start_index + int64_t(dst_index)))];
 				if(sample_dst_id >= 0){
 					atomicAdd(edge_access_time + sample_src_id, 1);
