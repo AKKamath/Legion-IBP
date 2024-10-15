@@ -23,7 +23,7 @@ NUM_GPUS?=2
 POSTFIX?=
 FP16 ?= False
 
-dgl_graphsage:
+dgl_graphsage: init
 	CUDA_VISIBLE_DEVICES=0,1 stdbuf -oL python training_backend/dgl_graphsage.py \
 		--dataset_path '${DATASET_PATH}' --dataset_name ${DATASET} --class_num ${CLASS_NUM} \
 		--train_batch_size ${BATCH_SIZE} --cache_memory ${CACHE_SIZE} \
@@ -55,10 +55,10 @@ extract_comptest:
 run_expts:
 	$(MAKE) run_reddit_all
 	$(MAKE) run_products_all
-	$(MAKE) run_cora_ls_all
-	$(MAKE) run_pubmed_ls_all
 	$(MAKE) run_citeseer_ls_all
+	$(MAKE) run_pubmed_ls_all
 	$(MAKE) run_mag_all
+	$(MAKE) run_cora_ls_all
 	$(MAKE) run_paper100m_all
 
 run_comptests:
