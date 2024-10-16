@@ -3,6 +3,7 @@
 #include "cache_helper.cuh"
 #include "static_cache_kernel.cuh"
 #include "ibp_dev_func.cuh"
+#include "compress/ibp_compress_dev.cuh"
 #define OFFSET_BITS (40L)
 #define GPU_BITS (3L)
 #define COMP_BITS (2L)
@@ -57,9 +58,9 @@ __global__ void compressed_insert_features_kernel(
             value = construct_hash_ptr(start_offset, gpu_id, 0);
         } else {
             // Compressed insert
-            compress_and_write((int32_t *)((char *)cache + start_offset), 
+            ibp::compress_and_write((int32_t *)((char *)cache + start_offset), 
                 (int32_t *)&cpu_features[nodeId * feature_len], 
-                mask, bitval, feature_len, chunk_size);
+                feature_len, mask, bitval);
             value = construct_hash_ptr(start_offset, gpu_id, 1);
             //if(laneId == 0)
             //    printf("%p: Ptr %lx, val %lx\n", ((char *)cache + start_offset), 
@@ -73,69 +74,6 @@ __global__ void compressed_insert_features_kernel(
         // Increment fail counter if appropriate
         if(slot < 0 && failed_inserts != nullptr && laneId == 0) {
             atomicAdd(failed_inserts, 1);
-        }
-    }
-}
-
-__global__ void compressed_cpu_features_kernel(
-    int32_t *mask, int32_t *bitval, int32_t *input_features, int32_t *output_features, 
-    int64_t total_nodes, int64_t feature_len, int32_t *workspace, int32_t *bitmask, 
-    int chunk_size = 4, int *comp_ctr = nullptr, ull *compress_size = nullptr)
-{
-    int64_t feat_bytes = feature_len * sizeof(int32_t);
-    int threadId = threadIdx.x + blockIdx.x * blockDim.x;
-    int warpId = threadId / DWARP_SIZE;
-    int laneId = threadIdx.x % DWARP_SIZE;
-    int numWarps = (blockDim.x * gridDim.x) / DWARP_SIZE;
-    int32_t *myworkspace = &workspace[warpId * feature_len];
-    for(int i = warpId; i < total_nodes; i += numWarps) {
-        int32_t ctr = 0;
-        for(int j = laneId; j < feature_len; j += DWARP_SIZE) {
-            int32_t val = input_features[i * feature_len + j];
-            if((val & mask[j]) == bitval[j])
-                ctr += __popc(mask[j]);
-        }
-        // Get sum of ctr value from warp
-        ctr = warpInclusiveScanSync(FULL_MASK, ctr);
-        long compressed = 0;
-        if(laneId == DWARP_SIZE - 1) {
-            // Calc bytes for compressed data
-            int64_t metadata_size = BITS_TO_BYTES((feat_bytes + chunk_size - 1) / chunk_size);
-            int64_t feat_size = feat_bytes - ctr / 8;
-            // 4-byte align
-            metadata_size = (metadata_size + 3) / 4 * 4;
-            feat_size = (feat_size + 3) / 4 * 4;
-            int64_t comp_size = metadata_size + feat_size;
-            if(comp_size < feat_bytes)
-                compressed = comp_size;
-        }
-        compressed = __shfl_sync(FULL_MASK, compressed, DWARP_SIZE - 1);
-        if(compressed) {
-            // Compressed insert
-            compress_and_write(myworkspace, (int32_t *)&input_features[i * feature_len], 
-                mask, bitval, feature_len, chunk_size);
-            __syncwarp();
-            for(int j = laneId; j < feature_len; j += DWARP_SIZE) {
-                //if(i == 0)
-                //    printf("%d: Orig: %x, Comp: %x\n", j, ((int32_t*)input_features)[i * feature_len + j], myworkspace[j]);
-                output_features[i * feature_len + j] = myworkspace[j];
-                myworkspace[j] = 0;
-            }
-            if(laneId == 0) {
-                atomicOr(&bitmask[i / 32], 1 << (i % 32));
-                if(comp_ctr != nullptr)
-                    atomicAdd(comp_ctr, 1);
-                if(compress_size != nullptr) {
-                    atomicAdd(compress_size, (ull)compressed);
-                }
-            }
-        } else {
-            for(int j = laneId; j < feature_len; j += DWARP_SIZE) {
-                output_features[i * feature_len + j] = input_features[i * feature_len + j];
-            }
-            if(laneId == 0 && compress_size != nullptr) {
-                atomicAdd(compress_size, feature_len * sizeof(float));
-            }
         }
     }
 }
