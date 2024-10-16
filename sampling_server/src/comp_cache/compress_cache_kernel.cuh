@@ -24,35 +24,6 @@ __inline__ __device__ int64_t deconstruct_hash_ptr(int64_t ptr, int64_t &gpu_id,
     return ptr & OFFSET_MASK;
 }
 
-__global__ void check_compress_size_kernel(int32_t *input_feats, int32_t *index_array, int64_t *compressed_size,
-    int32_t *mask, int32_t *values, int64_t num_feats, int64_t feature_len, int64_t chunk_size = 4)
-{
-    int64_t feat_bytes = feature_len * sizeof(int32_t);
-    __shared__ long long unsigned ctr;
-    for(int i = blockIdx.x; i < num_feats; i += gridDim.x) {
-        ctr = 0;
-        __syncthreads();
-        int64_t nodeId = index_array[i];
-        for(int j = threadIdx.x; j < feature_len; j += blockDim.x) {
-            int32_t val = input_feats[nodeId * feature_len + j];
-            if((val & mask[j]) == values[j])
-                atomicAdd(&ctr, __popc(mask[j]));
-        }
-        __syncthreads();
-        if(threadIdx.x == 0) {
-            // Calc bytes for compressed data
-            int64_t metadata_size = BITS_TO_BYTES((feat_bytes + chunk_size - 1) / chunk_size);
-            int64_t feat_size = feat_bytes - ctr / 8;
-            // 4-byte align
-            metadata_size = (metadata_size + 3) / 4 * 4;
-            feat_size = (feat_size + 3) / 4 * 4;
-            int64_t comp_size = metadata_size + feat_size;
-            compressed_size[i] = min(comp_size, feat_bytes);
-        }
-        __syncthreads();
-    }
-}
-
 __global__ void compressed_insert_features_kernel(
     void *cache, int **cache_key, ull **cache_val, 
     int *mask, int *bitval, int64_t *comp_size, int32_t prev_offset,

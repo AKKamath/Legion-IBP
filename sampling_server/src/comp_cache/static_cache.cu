@@ -5,8 +5,12 @@
 #include <cstdint>
 #include <iostream>
 #include <thrust/sequence.h>
-#include "compress_test.cuh"
-#include "ibp_preproc_host.cuh"
+#define IBP_DEBUG_PRINT
+#include "misc/compress_test.cuh"
+#include "misc/ibp_misc_kernels.cuh"
+#include "preproc/ibp_preproc_host.cuh"
+
+bool ibp_print_debug = true;
 using namespace nvcomp;
 
 void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len, 
@@ -31,7 +35,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     //-------------- COMPRESSION CODE ----------
     if(flags & (DYN_COMP | DYN_COMP_CPU | DYN_COMP_TEST)) {
         chunk_size = 4;
-        compress_len = ibp_preproc_data((int32_t*)cpu_features, total_nodes, 
+        compress_len = ibp::preproc_data((int32_t*)cpu_features, total_nodes, 
             feature_len, (int32_t**)&comp_mask, (int32_t**)&comp_bitval);
         printf("Finished compression preprocessing\n");
         fflush(stdout);
@@ -471,8 +475,9 @@ void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *inpu
         cudaSetDevice(device_id);
         cudaMemset(comp_size, 0, nodes_per_gpu * sizeof(int64_t));
         // Check space taken by compressed data
-        check_compress_size_kernel<<<32, 512>>>((int32_t *)input_feats, &index_array[inserted_feats], comp_size,
-            comp_mask, comp_bitval, nodes_per_gpu, feature_len);
+        ibp::check_compress_size_kernel<<<32, 512>>>((int32_t *)input_feats, 
+            nodes_per_gpu, feature_len, (int32_t *)comp_mask, (int32_t *)comp_bitval, 
+            comp_size, &index_array[inserted_feats]);
         cudaCheckError();
         thrust::inclusive_scan(thrust::device, comp_size, comp_size + nodes_per_gpu, comp_size);
         fprintf(stderr, "Cache %p, size %ld (End: %p)\n", host_cache_storage[i], size_per_gpu, 
@@ -505,8 +510,9 @@ void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *inpu
             feats_to_insert = min(feats_to_insert, total_nodes - inserted_feats);
             cudaMemset(comp_size, 0, feats_to_insert * sizeof(int64_t));
             // Check space taken by compressed data
-            check_compress_size_kernel<<<32, 512>>>((int32_t *)input_feats, &index_array[inserted_feats], comp_size,
-                comp_mask, comp_bitval, feats_to_insert, feature_len);
+            ibp::check_compress_size_kernel<<<32, 512>>>((int32_t *)input_feats, 
+                feats_to_insert, feature_len, (int32_t *)comp_mask, 
+                (int32_t *)comp_bitval, comp_size, &index_array[inserted_feats]);
             cudaCheckError();
             thrust::inclusive_scan(thrust::device, comp_size, comp_size + feats_to_insert, comp_size);
             // Compress and insert the data
