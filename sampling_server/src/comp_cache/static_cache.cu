@@ -10,6 +10,7 @@
 #include "misc/ibp_misc_kernels.cuh"
 #include "preproc/ibp_preproc_host.cuh"
 #include "compress/ibp_compress_host.cuh"
+#include "decompress/ibp_decompress_host.cuh"
 
 bool ibp_print_debug = true;
 using namespace nvcomp;
@@ -36,6 +37,8 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     //-------------- COMPRESSION CODE ----------
     if(flags & (DYN_COMP | DYN_COMP_CPU | DYN_COMP_TEST)) {
         chunk_size = 4;
+        comp_mask = nullptr;
+        comp_bitval = nullptr;
         compress_len = ibp::preproc_data((int32_t*)cpu_features, total_nodes, 
             feature_len, (int32_t**)&comp_mask, (int32_t**)&comp_bitval);
         printf("Finished compression preprocessing\n");
@@ -237,9 +240,14 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         cudaCheckError();
         // Our scheme
         cudaMemset(compressed_buffer, 0, in_bytes);
-        ull comp_size = ibp::compress_inplace((int32_t*)compressed_buffer, 
+        ull *d_comp_size, comp_size = 0;
+        cudaMalloc(&d_comp_size, sizeof(ull));
+        cudaMemset(d_comp_size, 0, sizeof(ull));
+        ibp::compress_inplace((int32_t*)compressed_buffer, 
             (int32_t*)cpu_features, nodes_per_gpu, (int64_t)feature_len, 
-            comp_mask, comp_bitval, comp_bitmask);
+            comp_mask, comp_bitval, comp_bitmask, (void*)nullptr, (void*)nullptr, 
+            d_comp_size, stream);
+        cudaMemcpy(&comp_size, d_comp_size, sizeof(ull), cudaMemcpyDeviceToHost);
         printf("%s: Uncompressed bytes: %ld, compressed bytes: %llu, ratio: %f\n",
             "Us", in_bytes, comp_size, (float)in_bytes / comp_size);
         cudaCheckError();
@@ -281,30 +289,11 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             }
         }
         
-        auto kernel2 = &test_decompressed_features_kernel2<true>;
-        // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
-        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t)) {
-            shmem_size = 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t);
-            printf("Have enough shmem (alloc = %d, maxshmem = %d, feat_len = %d, required = %lu)\n", 
-                shmem_size, maxShmem[0], feature_len, 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t));
-            kernel2 = &test_decompressed_features_kernel2<true>;
-        }
-        else {
-            shmem_size = maxShmem[0]; //256 / 32 * 96 * sizeof(int32_t);
-            printf("Not enough shmem (alloc = %d, maxshmem = %d, feat_len = %d, required = %lu)\n", 
-                shmem_size, maxShmem[0], feature_len, 2 * feature_len * sizeof(int32_t) + 256 / 32 * 96 * sizeof(int32_t));
-            kernel2 = &test_decompressed_features_kernel2<false>;
-        }
-        // Need opt-in for large shmem allocations
-        if (shmem_size >= 48 * 1024) {
-            cudaFuncSetAttribute(kernel2, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
-            cudaCheckError();
-        }
         cudaMemset(device_output_data, 0, in_bytes);
         decomp_start = TIME_NOW;
-        kernel2<<<64, 256, shmem_size>>>(
-            comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data, 
-            nodes_per_gpu, feature_len, (float)comp_size / in_bytes * feature_len, comp_bitmask, shmem_size, 4);
+        ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer, 
+            nodes_per_gpu, (int64_t)feature_len, comp_mask, comp_bitval, comp_bitmask,
+            (int)((float)comp_size / in_bytes) * feature_len, (void*)nullptr, stream);
         cudaDeviceSynchronize();
         cudaCheckError();
         decomp_end = TIME_NOW;
@@ -392,11 +381,10 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     if(flags & DYN_COMP_CPU) {
         cudaMalloc(&comp_bitmask, (total_nodes + 31) / 32 * sizeof(int32_t));
         cudaCheckError();
-        int comp_count = ibp::compress_inplace((int32_t*)cpu_features, 
+        ibp::compress_inplace((int32_t*)cpu_features, 
             (int32_t*)cpu_features, total_nodes, feature_len, 
             comp_mask, comp_bitval, comp_bitmask);
         cudaCheckError();
-        printf("Compressed %d nodes out of %ld\n", comp_count, total_nodes);
         /*
         // Test if compressed CPU features match when decompressed.
         int32_t *decomp;

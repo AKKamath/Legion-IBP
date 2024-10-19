@@ -4,6 +4,7 @@
 #include "static_cache_kernel.cuh"
 #include "ibp_dev_func.cuh"
 #include "compress/ibp_compress_dev.cuh"
+#include "decompress/ibp_decompress_dev.cuh"
 #define OFFSET_BITS (40L)
 #define GPU_BITS (3L)
 #define COMP_BITS (2L)
@@ -136,44 +137,6 @@ __global__ void test_decompressed_features_kernel(
                         &input_features[i * feature_len], feature_len);
         }
         __syncwarp();
-    }
-}
-
-template<bool FITS_SHMEM>
-__global__ void test_decompressed_features_kernel2(
-    const int32_t *mask, const int32_t *bitval, const int32_t *input_features, int32_t *output_features, 
-    int64_t total_nodes, int64_t feature_len, int64_t compressed_len, const int32_t *bitmask, size_t shmem_size,
-    int chunk_size = 4)
-{
-    extern __shared__ int32_t shared_mem[];
-    // 32 elements for metadata, 64 elements for working data
-    // = 96 elements per warp
-    int32_t *workspace = &shared_mem[(threadIdx.x / DWARP_SIZE) * 96];
-    // Retain shmem_size as the number of elements in shmem thingies
-    shmem_size -= (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * 96 * sizeof(int32_t);
-    // Convert bytes to elements per shm_mask/shm_bitval array
-    shmem_size /= sizeof(int32_t) * 2;
-    int32_t *shm_mask = &shared_mem[(blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * 96];
-    int32_t *shm_bitval = &shared_mem[(blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * 96 + shmem_size];
-    for(int i = threadIdx.x; i < shmem_size; i += blockDim.x) {
-        shm_mask[i] = mask[i];
-        shm_bitval[i] = bitval[i];
-    }
-    __syncthreads();
-
-    int threadId = threadIdx.x + blockIdx.x * blockDim.x;
-    int warpId = threadId / DWARP_SIZE;
-    int numWarps = (blockDim.x * gridDim.x) / DWARP_SIZE;
-    for(int i = warpId; i < total_nodes; i += numWarps) {
-        // Compressed insert
-        if(bitmask[i / 32] & (1 << (i % 32))){
-            decompress_and_write_cpu<FITS_SHMEM>(&output_features[i * feature_len], 
-                &input_features[i * feature_len], shm_mask, shm_bitval, 
-                feature_len, compressed_len, workspace, mask, bitval, shmem_size, chunk_size);
-        } else {
-            memcpy_warp(&output_features[i * feature_len], 
-                        &input_features[i * feature_len], feature_len);
-        }
     }
 }
 
@@ -447,7 +410,7 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
                 atomicAdd(misses, 1);
 #endif
             if(bitmask[nodeId / 32] & (1 << (nodeId % 32))) {
-                decompress_and_write_cpu<FITS_SHMEM>((int32_t*)&output_features[i * feature_len], 
+                ibp::decompress_fetch_cpu<FITS_SHMEM>((int32_t*)&output_features[i * feature_len], 
                     (int32_t*)&cpu_features[nodeId * feature_len], shm_mask, shm_bitval, 
                     feature_len, compressed_len, workspace, dev_mask, dev_bitval, shmem_size);
             } else {
