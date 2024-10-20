@@ -585,16 +585,18 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
     int64_t *node_index, float *input_feats, int total_nodes, cudaStream_t stream, 
     ull *misses, ull *lookups, ull *inserts)
 {
+    constexpr int NTHREADS = 1024;
+    constexpr int NBLOCKS = 16;
     int shmem_size;
     if(flags & DYN_CPU_TEST2) {
         auto kernel = &compress_cpu_transfer_kernel2<true>;
         // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
-        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + 512 / 32 * 96 * sizeof(int32_t)) {
-            shmem_size = 2 * feature_len * sizeof(int32_t) + 512 / 32 * 96 * sizeof(int32_t);
+        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + NTHREADS / DWARP_SIZE * 96 * sizeof(int32_t)) {
+            shmem_size = 2 * feature_len * sizeof(int32_t) + NTHREADS / DWARP_SIZE * 96 * sizeof(int32_t);
             kernel = &compress_cpu_transfer_kernel2<true>;
         }
         else {
-            shmem_size = 512 / 32 * 96 * sizeof(int32_t);
+            shmem_size = NTHREADS / DWARP_SIZE * 96 * sizeof(int32_t);
             kernel = &compress_cpu_transfer_kernel2<false>;
         }
         // Need opt-in for large shmem allocations
@@ -603,7 +605,7 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
             cudaCheckError();
         }
         
-        kernel<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
+        kernel<<<NBLOCKS, NTHREADS, shmem_size, stream>>>(dev_cache_storage, 
             node_index, num_nodes, feature_len, compress_len, output_buffer, comp_bitmask, input_feats, 
             nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets, shmem_size,
             misses, lookups, inserts);
@@ -626,7 +628,7 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
                 cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
                 cudaCheckError();
             }
-            kernel<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
+            kernel<<<NBLOCKS, NTHREADS, shmem_size, stream>>>(dev_cache_storage, 
                 node_index, num_nodes, feature_len, output_buffer, comp_bitmask, input_feats, 
                 nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets,
                 misses, lookups, inserts);
@@ -649,13 +651,13 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
                 cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
                 cudaCheckError();
             }
-            kernel<<<32, 512, shmem_size, stream>>>(dev_cache_storage, 
+            kernel<<<NBLOCKS, NTHREADS, shmem_size, stream>>>(dev_cache_storage, 
                 node_index, num_nodes, feature_len, output_buffer, 
                 input_feats, nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets,
                 misses, lookups, inserts);
         }
         else
-            static_transfer_kernel<<<32, 512, 0, stream>>>(
+            static_transfer_kernel<<<32, NTHREADS, 0, stream>>>(
                 dev_cache_storage, dev_cache_key, dev_cache_offset, node_index, num_nodes, 
                 feature_len, output_buffer, input_feats, nodeIds, 0, num_gpus, total_nodes, 
                 num_ways, num_sets, flags, misses, lookups, inserts);
