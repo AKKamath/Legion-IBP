@@ -91,7 +91,7 @@ def load(dataset_path, dataset_name):
     print("Shared feats")
     #features = features.pin_memory()
     #print("Pinned feats")
-    features = features.reshape((vertices_num, features_dim))
+    features = features.reshape((vertices_num, features_dim)).pin_memory()
     print("Modded feats")
     g = dgl.graph(('csr', (csr_node_index, csr_dst_ids, [])))
     # Reverse graph as DGL uses "in" edges for sampling, while Legion uses "out"

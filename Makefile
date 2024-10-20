@@ -15,20 +15,21 @@ DATASET ?=reddit
 BATCH_SIZE ?=8192
 FEAT_NUM ?=602
 CLASS_NUM ?=50
-EPOCHS ?=10
+EPOCHS ?=1
 CACHE_SIZE ?=38000000
 DYN_CACHE ?=0
 OTHER_OPTS?=
 NUM_GPUS?=2
 POSTFIX?=
 FP16 ?= False
+COMPRESS ?= 0
 
 dgl_graphsage: init
 	CUDA_VISIBLE_DEVICES=0,1 stdbuf -oL python training_backend/dgl_graphsage.py \
 		--dataset_path '${DATASET_PATH}' --dataset_name ${DATASET} --class_num ${CLASS_NUM} \
 		--train_batch_size ${BATCH_SIZE} --cache_memory ${CACHE_SIZE} \
 		--features_num ${FEAT_NUM} --hidden_dim 256 --hops_num 2 --gpu_number ${NUM_GPUS} --float16 ${FP16} \
-		--epoch ${EPOCHS} > ${RESULTS}/${DATASET}/training${POSTFIX}_dgl.log
+		--epoch ${EPOCHS} --compress ${COMPRESS} > ${RESULTS}/${DATASET}/training_${POSTFIX}dgl.log
 
 graphsage:
 	$(MAKE) sampling & \
@@ -44,10 +45,10 @@ sampling: init clean
 		--cache_memory ${CACHE_SIZE} --dyn_cache ${DYN_CACHE} ${OTHER_OPTS} > ${RESULTS}/${DATASET}/sampling${POSTFIX}.log
 
 extract_%:
-	python scripts/extract_results.py ${RESULTS} $* "unopt dgl base mod comp cputest opt" > ${RESULTS}/$*.log
+	python scripts/extract_results.py ${RESULTS} $* "unopt dgl compdgl base mod comp cputest opt" > ${RESULTS}/$*.log
 
 extract_expts:
-	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt dgl base mod comp cputest opt"
+	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt dgl compdgl base mod comp cputest opt"
 
 extract_comptest:
 	python scripts/extract_compression.py ${RESULTS} "pubmed citeseer cora reddit products mag paper100m"
@@ -75,6 +76,7 @@ run_%_all:
 	$(MAKE) run_$*_cputest
 	$(MAKE) run_$*_base
 	$(MAKE) run_$*_dgl
+	$(MAKE) run_$*_dglcomp
 	$(MAKE) run_$*_mod
 	$(MAKE) run_$*_opt
 	#$(MAKE) run_$*_unopt
@@ -116,6 +118,9 @@ run_%_all:
 %_dgl:
 	$(MAKE) $* EXPT=dgl_graphsage
  
+%_dglcomp:
+	$(MAKE) $* EXPT=dgl_graphsage COMPRESS=1 POSTFIX=comp${POSTFIX}
+
 EXPT=graphsage
 # Individual experiment commands
 run_paper100m:

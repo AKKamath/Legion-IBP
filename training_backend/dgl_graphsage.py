@@ -339,6 +339,7 @@ if __name__ == "__main__":
     argparser.add_argument('--dataset_name', type=str, default="ukunion")
     argparser.add_argument('--train_batch_size', type=int, default=8000)
     argparser.add_argument('--cache_memory', type=int, default=38000000)
+    argparser.add_argument('--compress', type=int, default=0)
     args = argparser.parse_args()
     if args.float16 == "True":
         args.float16 = True
@@ -375,6 +376,10 @@ if __name__ == "__main__":
     test_step = (max_test_size - 1) // 512 + 1
 
     print("Train step: {}, Valid step: {}, Test step: {}".format(train_step, valid_step, test_step))
+
+    if(args.compress):
+        print("Compressing features")
+        g.get_node_storage("feat").compress()
 
     graph_data = g, train_idx_split, val_idx_split, test_idx_split, \
         train_step, valid_step, test_step
