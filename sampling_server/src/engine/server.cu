@@ -382,7 +382,10 @@ public:
 #endif
 #ifdef MONITOR
             for(int i = 0; i < op_num_; i++){
-                std::cout<<i<<" time: "<< op_time[i] / batches <<" ms, ";
+                const char *op_name = i == 0 ? "BatchGenerate" : 
+                    ((i % INTRABATCH_CON) == 2 ? "SSDIOComplete" : 
+                    (i % INTRABATCH_CON == 1 ? "CacheLookup" : "RandomSample"));
+                std::cout<<i <<" - "<<op_name<<" time: "<< op_time[i] / batches <<" ms, ";
                 op_time[i] = 0;
             }
             std::cout<<"\n";
