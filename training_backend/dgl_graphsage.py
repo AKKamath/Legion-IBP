@@ -87,7 +87,7 @@ def backward(scaler, loss, optimizer):
 
 total_train_time = 0
 train_batches = 0
-def train_one_step(model, optimizer, loss_fcn, device, feat_list, blocks, fp16):
+def train_one_step(model, optimizer, loss_fcn, device, feat_list, blocks, fp16, device_id, it):
 
     features = blocks[0].srcdata["feat"]
     labels = blocks[-1].dstdata["label"]
@@ -101,7 +101,7 @@ def train_one_step(model, optimizer, loss_fcn, device, feat_list, blocks, fp16):
 
     start = time.perf_counter_ns()
     with autocast('cuda', enabled=fp16, dtype=data_type):
-        #print("Timestamp {:d}, sample {:d}, worker {:d}, system {:s}, {:s}".format(time.time_ns(), iter, device_id, "trainer", "getsample"))
+        #print("Timestamp {:d}, sample {:d}, worker {:d}, system {:s}, {:s}".format(time.time_ns(), it, device_id, "trainer", "getsample"))
         batch_pred = model(blocks, features)
         long_labels = torch.as_tensor(labels, dtype=torch.long, device=device)
         loss = loss_fcn(batch_pred, long_labels)
@@ -114,7 +114,7 @@ def train_one_step(model, optimizer, loss_fcn, device, feat_list, blocks, fp16):
     
     torch.cuda.synchronize()
     end = time.perf_counter_ns()    
-    #print("Timestamp {:d}, sample {:d}, worker {:d}, system {:s}, {:s}".format(time.time_ns(), iter, device_id, "trainer", "finishtrain"))
+    #print("Timestamp {:d}, sample {:d}, worker {:d}, system {:s}, {:s}".format(time.time_ns(), it, device_id, "trainer", "finishtrain"))
     global total_train_time
     global train_batches
     total_train_time += end - start
@@ -258,13 +258,16 @@ def worker_process(rank, world_size, args, g_data):
         global train_batches
         total_train_time = 0
         train_batches = 0
+        #print("Timestamp {:d}, sample {:d}, worker {:d}, system {:s}, {:s}".format(time.time_ns(), 0, rank, "sampler","start"))
         for it, (input_nodes, output_nodes, blocks) in enumerate(
             train_dataloader
         ):
-            #print(output_nodes)
-            train_loss = train_one_step(model, optimizer, loss_fcn, cuda_device, feat_len, blocks, args.float16)
             if it >= train_step:
                 break
+            #print("Timestamp {:d}, sample {:d}, worker {:d}, system {:s}, {:s}".format(time.time_ns(), it, rank, "sampler", "gensample"))
+            #print(output_nodes)
+            train_loss = train_one_step(model, optimizer, loss_fcn, cuda_device, feat_len, blocks, args.float16, device_id, it)
+            #print("Timestamp {:d}, sample {:d}, worker {:d}, system {:s}, {:s}".format(time.time_ns(), it + 1, rank, "sampler","start"))
             #if iter % 100 == 0 and iter != 0:
             #    print('Iter {} Batches: {}, avg train time : {} us'.format(iter, train_batches, total_train_time / train_batches / 1000))
             # if device_id == 0:
@@ -306,9 +309,9 @@ def worker_process(rank, world_size, args, g_data):
         for it, (input_nodes, output_nodes, blocks) in enumerate(
             test_dataloader
         ):
-            test_one_step(model, metric, cuda_device, feat_len, blocks, args.float16)
             if it >= test_step:
                 break
+            test_one_step(model, metric, cuda_device, feat_len, blocks, args.float16)
         acc = metric.compute()
     if device_id == 0:
         print("Accuracy on test data: {}".format(acc))
