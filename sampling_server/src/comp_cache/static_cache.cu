@@ -1,3 +1,4 @@
+#define IBP_DEBUG_PRINT
 #include "static_cache.cuh"
 #include "compress_cache_kernel.cuh"
 #include <bit>
@@ -5,7 +6,6 @@
 #include <cstdint>
 #include <iostream>
 #include <thrust/sequence.h>
-#define IBP_DEBUG_PRINT
 #include "misc/compress_test.cuh"
 #include "misc/ibp_misc_kernels.cuh"
 #include "preproc/ibp_preproc_host.cuh"
@@ -585,8 +585,8 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
     int64_t *node_index, float *input_feats, int total_nodes, cudaStream_t stream, 
     ull *misses, ull *lookups, ull *inserts)
 {
-    constexpr int NTHREADS = 1024;
-    constexpr int NBLOCKS = 16;
+    constexpr int NTHREADS = 512;
+    constexpr int NBLOCKS = 32;
     int shmem_size;
     if(flags & DYN_CPU_TEST2) {
         auto kernel = &compress_cpu_transfer_kernel2<true>;
@@ -657,7 +657,7 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
                 misses, lookups, inserts);
         }
         else
-            static_transfer_kernel<<<32, NTHREADS, 0, stream>>>(
+            static_transfer_kernel<<<NBLOCKS, NTHREADS, 0, stream>>>(
                 dev_cache_storage, dev_cache_key, dev_cache_offset, node_index, num_nodes, 
                 feature_len, output_buffer, input_feats, nodeIds, 0, num_gpus, total_nodes, 
                 num_ways, num_sets, flags, misses, lookups, inserts);
