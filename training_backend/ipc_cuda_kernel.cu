@@ -204,10 +204,18 @@ std::vector<torch::Tensor> cuda_get_next(
 
     ret.push_back(ids_tensor);
 
-    torch::Tensor feature_tensor = torch::from_blob(
-      float_features,
-      {(long long)(h_node_counter[INTRABATCH_CON * 3 + hop_num]), (long long)(feature_dim)},
-      torch::TensorOptions().dtype(torch::kF32).device(device));
+    //torch::Tensor feature_tensor = torch::from_blob(
+    //  float_features,
+    //  {(long long)(h_node_counter[INTRABATCH_CON * 3 + hop_num]), (long long)(feature_dim)},
+    //  torch::TensorOptions().dtype(torch::kF32).device(device));
+    
+    // Creating a new tensor and copying works better than from_blob. I dont know why. 
+    torch::Tensor feature_tensor = torch::empty(
+      {(long long)h_node_counter[INTRABATCH_CON * 3 + hop_num], (long long)feature_dim},
+      torch::TensorOptions().dtype(torch::kFloat32).device(device));
+    cudaMemcpy(feature_tensor.data_ptr(), float_features, 
+      h_node_counter[INTRABATCH_CON * 3 + hop_num] * feature_dim * sizeof(float), 
+      cudaMemcpyDeviceToDevice);
 
     ret.push_back(feature_tensor);
 
