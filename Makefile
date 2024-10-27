@@ -15,7 +15,7 @@ DATASET ?=reddit
 BATCH_SIZE ?=8192
 FEAT_NUM ?=602
 CLASS_NUM ?=50
-EPOCHS ?=1
+EPOCHS ?=10
 CACHE_SIZE ?=38000000
 DYN_CACHE ?=0
 OTHER_OPTS?=
@@ -24,7 +24,7 @@ POSTFIX?=
 FP16 ?= False
 COMPRESS ?= 0
 
-dgl_graphsage: init
+dgl_graphsage: init clean
 	CUDA_VISIBLE_DEVICES=0,1 stdbuf -oL python training_backend/dgl_graphsage.py \
 		--dataset_path '${DATASET_PATH}' --dataset_name ${DATASET} --class_num ${CLASS_NUM} \
 		--train_batch_size ${BATCH_SIZE} --cache_memory ${CACHE_SIZE} \
@@ -57,10 +57,10 @@ run_expts:
 	$(MAKE) run_reddit_all
 	$(MAKE) run_products_all
 	$(MAKE) run_citeseer_ls_all
-	$(MAKE) run_pubmed_ls_all
 	$(MAKE) run_mag_all
-	$(MAKE) run_cora_ls_all
 	$(MAKE) run_paper100m_all
+	$(MAKE) run_cora_ls_all
+	$(MAKE) run_pubmed_ls_all
 
 run_comptests:
 	$(MAKE) run_reddit_comptest
@@ -72,11 +72,11 @@ run_comptests:
 	$(MAKE) run_mag_comptest
 
 run_%_all:
+	#$(MAKE) run_$*_dgl
+	#$(MAKE) run_$*_dglcomp
+	$(MAKE) run_$*_base
 	$(MAKE) run_$*_comp
 	$(MAKE) run_$*_cputest
-	$(MAKE) run_$*_base
-	$(MAKE) run_$*_dgl
-	$(MAKE) run_$*_dglcomp
 	$(MAKE) run_$*_mod
 	$(MAKE) run_$*_opt
 	#$(MAKE) run_$*_unopt
@@ -154,4 +154,4 @@ run_citeseer_ls:
 	$(MAKE) ${EXPT} DATASET=citeseer_ls FEAT_NUM=3703 CLASS_NUM=6 BATCH_SIZE=1024
 
 run_cora_ls:
-	$(MAKE) ${EXPT} DATASET=cora_ls FEAT_NUM=8710 CLASS_NUM=70 BATCH_SIZE=768
+	$(MAKE) ${EXPT} DATASET=cora_ls FEAT_NUM=8710 CLASS_NUM=70 BATCH_SIZE=512
