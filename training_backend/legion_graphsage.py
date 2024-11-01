@@ -233,7 +233,7 @@ def worker_process(rank, world_size, args):
             #     print('Iter {} Train Loss :{} '.format(iter, train_loss))
 
             print('Iter {} Batches: {}, avg valid time : {} us'.format(iter, train_batches, total_train_time / train_batches / 1000))
-            epoch_time += time.time() - start
+            #epoch_time += time.time() - start
             acc_val = metric.compute()
         if device_id == 0:
             print("Epoch:{}, Cost:{} s, Val Acc: {}".format(epoch, epoch_time, acc_val))
