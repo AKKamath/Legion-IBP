@@ -81,23 +81,18 @@ __global__ void compressed_insert_features_kernel(
 
 __global__ void decompressed_cpu_features_kernel(
     int32_t *mask, int32_t *bitval, int32_t *input_features, int32_t *output_features, 
-    int64_t total_nodes, int64_t feature_len, int32_t *workspace, int32_t *bitmask, 
+    int64_t total_nodes, int64_t feature_len, int32_t *bitmask, 
     int chunk_size = 4)
 {
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
     int warpId = threadId / DWARP_SIZE;
     int laneId = threadIdx.x % DWARP_SIZE;
     int numWarps = (blockDim.x * gridDim.x) / DWARP_SIZE;
-    int32_t *myworkspace = &workspace[warpId * feature_len];
     for(int i = warpId; i < total_nodes; i += numWarps) {
         // Compressed insert
         if(bitmask[i / 32] & (1 << (i % 32))){
-            decompress_and_write(myworkspace, (int32_t *)&input_features[i * feature_len], 
+            decompress_and_write(&output_features[i * feature_len], (int32_t *)&input_features[i * feature_len], 
                 mask, bitval, feature_len, chunk_size);
-            for(int j = laneId; j < feature_len; j += DWARP_SIZE) {
-                output_features[i * feature_len + j] = myworkspace[j];
-                myworkspace[j] = 0;
-            }
         } else {
             for(int j = laneId; j < feature_len; j += DWARP_SIZE) {
                 output_features[i * feature_len + j] = input_features[i * feature_len + j];
@@ -359,7 +354,7 @@ __global__ void compress_cpu_transfer_kernel(void **dev_cache, int64_t *cache_in
     }
 }
 
-template<bool FITS_SHMEM>
+template<bool FITS_SHMEM, int SHM_META, int SHM_WORK>
 __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_index, 
     int64_t num_nodes, int64_t feature_len, int64_t compressed_len, float *output_features, int32_t *bitmask,
     float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval, 
@@ -410,7 +405,8 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
                 atomicAdd(misses, 1);
 #endif
             if(bitmask[nodeId / 32] & (1 << (nodeId % 32))) {
-                ibp::decompress_fetch_cpu<FITS_SHMEM>((int32_t*)&output_features[i * feature_len], 
+                ibp::decompress_fetch_cpu<FITS_SHMEM, SHM_META, SHM_WORK>(
+                    (int32_t*)&output_features[i * feature_len], 
                     (int32_t*)&cpu_features[nodeId * feature_len], shm_mask, shm_bitval, 
                     feature_len, compressed_len, workspace, dev_mask, dev_bitval, shmem_size);
             } else {

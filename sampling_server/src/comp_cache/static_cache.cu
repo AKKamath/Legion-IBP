@@ -235,6 +235,11 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             }
         }
 
+        // Get SM info
+        int device, sm_count;
+        cudaGetDevice(&device);
+        cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device);
+
         cudaMalloc(&comp_bitmask, (nodes_per_gpu + 31) / 32 * sizeof(int32_t));
         cudaMemset(comp_bitmask, 0, (nodes_per_gpu + 31) / 32 * sizeof(int32_t));
         cudaCheckError();
@@ -269,7 +274,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             cudaCheckError();
         }
         decomp_start = TIME_NOW;
-        kernel<<<64, 256, shmem_size>>>(
+        kernel<<<sm_count, 256, shmem_size>>>(
             comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data, 
             nodes_per_gpu, feature_len, comp_bitmask, 4);
         cudaDeviceSynchronize();
@@ -293,7 +298,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         decomp_start = TIME_NOW;
         ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer, 
             nodes_per_gpu, (int64_t)feature_len, comp_mask, comp_bitval, comp_bitmask,
-            (int)((float)comp_size / in_bytes) * feature_len, (void*)nullptr, stream);
+            (int)((float)comp_size / in_bytes) * feature_len, (void*)nullptr, stream, sm_count, 512);
         cudaDeviceSynchronize();
         cudaCheckError();
         decomp_end = TIME_NOW;
@@ -311,15 +316,12 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             }
         }
 
-        int *working_space;
-        cudaMalloc(&working_space, sizeof(ull) + (64 * 256 / DWARP_SIZE * feature_len) * sizeof(int));
-        cudaMemset(working_space, 0, sizeof(ull) + (64 * 256 / DWARP_SIZE * feature_len) * sizeof(int));
         // Flat data copy
         cudaMemset(comp_bitmask, 0, (nodes_per_gpu + 31) / 32 * sizeof(int32_t));
         decomp_start = TIME_NOW;
-        decompressed_cpu_features_kernel<<<64, 256>>>(
+        decompressed_cpu_features_kernel<<<sm_count, 512>>>(
             comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data, 
-            nodes_per_gpu, feature_len, working_space, comp_bitmask);
+            nodes_per_gpu, feature_len, comp_bitmask);
         cudaDeviceSynchronize();
         decomp_end = TIME_NOW;
         printf("%s: Time taken to decompress: %f ms. Throughput: %f MB/s\n", "Transfer",
@@ -585,19 +587,27 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
     int64_t *node_index, float *input_feats, int total_nodes, cudaStream_t stream, 
     ull *misses, ull *lookups, ull *inserts)
 {
-    constexpr int NTHREADS = 512;
-    constexpr int NBLOCKS = 32;
+    // Tested for V100, A100. Adjust as needed for your GPU
+    int major_version = 7;
+    int device = 0;
+    cudaGetDevice(&device);
+    cudaDeviceGetAttribute (&major_version, cudaDevAttrComputeCapabilityMajor, device);
+
+    const int NTHREADS = 512;
+    const int NBLOCKS = major_version == 8 ? 64 : 32;
     int shmem_size;
     if(flags & DYN_CPU_TEST2) {
-        auto kernel = &compress_cpu_transfer_kernel2<true>;
+        constexpr int SHM_META = 128;
+        constexpr int SHM_WORK = 256;
+        auto kernel = &compress_cpu_transfer_kernel2<true, SHM_META, SHM_WORK>;
         // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
         if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + NTHREADS / DWARP_SIZE * 96 * sizeof(int32_t)) {
             shmem_size = 2 * feature_len * sizeof(int32_t) + NTHREADS / DWARP_SIZE * 96 * sizeof(int32_t);
-            kernel = &compress_cpu_transfer_kernel2<true>;
+            kernel = &compress_cpu_transfer_kernel2<true, SHM_META, SHM_WORK>;
         }
         else {
             shmem_size = NTHREADS / DWARP_SIZE * 96 * sizeof(int32_t);
-            kernel = &compress_cpu_transfer_kernel2<false>;
+            kernel = &compress_cpu_transfer_kernel2<false, SHM_META, SHM_WORK>;
         }
         // Need opt-in for large shmem allocations
         if (shmem_size >= 48 * 1024) {
