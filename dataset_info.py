@@ -89,13 +89,13 @@ def get(dataset_path, dataset_name):
         valid_set_num = 333
         test_set_num = 1664
     elif dataset_name == "pubmed_ls":
-        path = dataset_path + "/ukunion/"
-        vertices_num = 133633040
-        edges_num = 5507679822
+        path = dataset_path + "/products/"
+        vertices_num = 2449029
+        edges_num = 123718280
         features_dim = 500
-        train_set_num = 13363304
-        valid_set_num = 100000
-        test_set_num = 100000
+        train_set_num = 196615
+        valid_set_num = 39323
+        test_set_num = 2213091
         feat_dataset_file = dataset_path + "/pubmed/"
     elif dataset_name == "citeseer_ls":
         path =  dataset_path + "/products/"
