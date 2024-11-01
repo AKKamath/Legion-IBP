@@ -18,7 +18,7 @@ clean:
 ################################## compiler #######################################
 
 NVCXX := nvcc
-NVCXXFLAGS := -lnvcomp -std=c++17 -arch=sm_70 -Xcompiler -Wall \
+NVCXXFLAGS := -lnvcomp -std=c++17 -gencode=arch=compute_70,code=sm_70 -arch=sm_80 -Xcompiler -Wall \
 			  --extended-lambda \
 			  -Xcompiler -fPIC -lpthread \
 			  --expt-relaxed-constexpr \
