@@ -6,8 +6,8 @@ import glob
 
 RATIOS = {}
 THPUTS = {}
-def extract_ratio(file_path):
-    dataset = re.findall(r'results/(.*)/sampling_comptest.log', file_path)[0]
+def extract_ratio(file_path, folder_path):
+    dataset = re.findall(folder_path + '/(.*)/sampling_comptest.log', file_path)[0]
     with open(file_path, 'r') as file:
         content = file.read()
         matches = re.findall(r'(.*): Uncompressed bytes: [0-9]+, compressed bytes: [0-9]+, ratio: ([0-9]+\.[0-9]+)', content)
@@ -16,8 +16,8 @@ def extract_ratio(file_path):
                 RATIOS[match[0]] = {}
             RATIOS[match[0]][dataset] = float(match[1])
 
-def extract_thput(file_path):
-    dataset = re.findall(r'results/(.*)/sampling_comptest.log', file_path)[0]
+def extract_thput(file_path, folder_path):
+    dataset = re.findall(folder_path + '/(.*)/sampling_comptest.log', file_path)[0]
     with open(file_path, 'r') as file:
         content = file.read()
         matches = re.findall(r'(.*): Time taken to decompress: ([0-9]+\.[0-9]+) ms. Throughput: ([0-9]+\.[0-9]+) MB/s', content)
@@ -31,8 +31,8 @@ folder_path = sys.argv[1]
 datasets = sys.argv[2].split()
 
 for dataset in datasets:
-    extract_ratio(folder_path + '/' + dataset + '/sampling_comptest.log')
-    extract_thput(folder_path + '/' + dataset + '/sampling_comptest.log')
+    extract_ratio(folder_path + '/' + dataset + '/sampling_comptest.log', folder_path)
+    extract_thput(folder_path + '/' + dataset + '/sampling_comptest.log', folder_path)
 
 
 print("Ratios", end='\t')
@@ -62,7 +62,7 @@ for algo in THPUTS:
     print("{:s}".format(algo), end='\t')
     for dataset in datasets:
         if(dataset in THPUTS[algo]):
-            print("{:.2f}".format(THPUTS[algo][dataset] / 1024), end='\t')
+            print("{:.2f}".format(THPUTS[algo][dataset] / 1000), end='\t')
         else:
             print("NA", end='\t')
     print()
@@ -77,7 +77,7 @@ print()
 for algo in THPUTS:
     print("{:s}".format(algo), end='\t')
     for dataset in datasets:
-        if(dataset in THPUTS[algo]):
+        if(dataset in THPUTS[algo] and dataset in THPUTS["Transfer"]):
             print("{:.2f}".format(THPUTS[algo][dataset] / THPUTS["Transfer"][dataset]), end='\t')
         else:
             print("NA", end='\t')
