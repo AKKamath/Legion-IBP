@@ -41,7 +41,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         comp_bitval = nullptr;
         compress_len = ibp::preproc_data((int32_t*)cpu_features, total_nodes, 
             feature_len, (int32_t**)&comp_mask, (int32_t**)&comp_bitval);
-        printf("Finished compression preprocessing\n");
+        printf("Finished compression preprocessing; compressed len %d\n", compress_len);
         fflush(stdout);
 
         // Need to decide a reasonable cache size
@@ -111,7 +111,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     std::cout << "Time taken to allocate data structures:" << (float)TIME_DIFF(start, end) / 1000.0 << " ms\n";
 
     if(flags & DYN_COMP_TEST) {
-        nodes_per_gpu = min(total_nodes, (int64_t)200000);
+        nodes_per_gpu = min(total_nodes, (int64_t)100000);
         cudaStream_t stream;
         cudaStreamCreate(&stream);
 
@@ -298,13 +298,57 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         decomp_start = TIME_NOW;
         ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer, 
             nodes_per_gpu, (int64_t)feature_len, comp_mask, comp_bitval, comp_bitmask,
-            (int)((float)comp_size / in_bytes) * feature_len, (void*)nullptr, stream, sm_count, 512);
+            (int)(((float)comp_size / (float)in_bytes) * feature_len), stream, sm_count, 512);
         cudaDeviceSynchronize();
         cudaCheckError();
         decomp_end = TIME_NOW;
         cudaMemcpy(host_output_data, device_output_data, in_bytes, cudaMemcpyDeviceToHost);
 
-        printf("%s: Time taken to decompress: %f ms. Throughput: %f MB/s; True thput: %f MB/s\n", "Us2",
+        printf("%s: Time taken to decompress: %f ms. Throughput: %f MB/s; True thput: %f MB/s\n", "Us2-Warp",
+            (float)TIME_DIFF(decomp_start, decomp_end) / 1000.0,
+            (float)in_bytes / TIME_DIFF(decomp_start, decomp_end),
+            (float)comp_size / TIME_DIFF(decomp_start, decomp_end));
+        cudaCheckError();
+        for(int i = 0; i < in_bytes / sizeof(float); ++i) {
+            if(((float*)cpu_features)[i] != ((float*)host_output_data)[i]) {
+                printf("Mismatch at %d: %x vs %x\n", i, ((int32_t*)cpu_features)[i], ((int32_t*)host_output_data)[i]);
+                break;
+            }
+        }
+        
+        cudaMemset(device_output_data, 0, in_bytes);
+        decomp_start = TIME_NOW;
+        ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer, 
+            nodes_per_gpu, (int64_t)feature_len, comp_mask, comp_bitval, comp_bitmask,
+            (int)(((float)comp_size / (float)in_bytes) * feature_len), stream, sm_count * 4, 512, 1);
+        cudaDeviceSynchronize();
+        cudaCheckError();
+        decomp_end = TIME_NOW;
+        cudaMemcpy(host_output_data, device_output_data, in_bytes, cudaMemcpyDeviceToHost);
+
+        printf("%s: Time taken to decompress: %f ms. Throughput: %f MB/s; True thput: %f MB/s\n", "Us-TB",
+            (float)TIME_DIFF(decomp_start, decomp_end) / 1000.0,
+            (float)in_bytes / TIME_DIFF(decomp_start, decomp_end),
+            (float)comp_size / TIME_DIFF(decomp_start, decomp_end));
+        cudaCheckError();
+        for(int i = 0; i < in_bytes / sizeof(float); ++i) {
+            if(((float*)cpu_features)[i] != ((float*)host_output_data)[i]) {
+                printf("Mismatch at %d: %x vs %x\n", i, ((int32_t*)cpu_features)[i], ((int32_t*)host_output_data)[i]);
+                break;
+            }
+        }
+        
+        cudaMemset(device_output_data, 0, in_bytes);
+        decomp_start = TIME_NOW;
+        ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer, 
+            nodes_per_gpu, (int64_t)feature_len, comp_mask, comp_bitval, comp_bitmask,
+            (int)(((float)comp_size / (float)in_bytes) * feature_len), stream, sm_count * 4, 512, -1);
+        cudaDeviceSynchronize();
+        cudaCheckError();
+        decomp_end = TIME_NOW;
+        cudaMemcpy(host_output_data, device_output_data, in_bytes, cudaMemcpyDeviceToHost);
+
+        printf("%s: Time taken to decompress: %f ms. Throughput: %f MB/s; True thput: %f MB/s\n", "Us-Auto",
             (float)TIME_DIFF(decomp_start, decomp_end) / 1000.0,
             (float)in_bytes / TIME_DIFF(decomp_start, decomp_end),
             (float)comp_size / TIME_DIFF(decomp_start, decomp_end));
@@ -341,13 +385,23 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     cudaMemset(dev_tracker, 0, 2 * sizeof(int));
     cudaCheckError();
     cudaDeviceSynchronize();
-    if(!(flags & DYN_COMP)) {
+    if(!(flags & DYN_COMP) && !(flags & DYN_CPU_TEST2)) {
         for(int i = 0; i < num_gpus; i++) {
             int device_id = i + dev_start;
             cudaSetDevice(device_id);
             // Insert features into the cache
             insert_features(host_cache_storage[i], nodes_per_gpu, i, cpu_features, 
                 &index_array[nodes_per_gpu * i], total_nodes, dev_tracker);
+        }
+    } else if(!(flags & DYN_COMP) && (flags & DYN_CPU_TEST2)) {
+        for(int i = 0; i < num_gpus; i++) {
+            int device_id = i + dev_start;
+            cudaSetDevice(device_id);
+            // Insert features into the cache
+            uncompressed_insert_features_kernel<<<32, 512>>>(
+                host_cache_storage[i], dev_cache_key, dev_cache_offset, 
+                device_id, num_gpus, nodes_per_gpu, feature_len, cpu_features,
+                &index_array[nodes_per_gpu * i], num_ways, num_sets, dev_tracker);
         }
     } else {
         insert_features_compressed(nodes_per_gpu, cpu_features, index_array, 
@@ -547,7 +601,7 @@ void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *inpu
 void StaticCache::test_lookup_features(int64_t num_nodes, float *input_feats, 
     int32_t *index_array, int *success_lookups, int *keys_found)
 {
-    if(!(flags & DYN_COMP))
+    if(!(flags & DYN_COMP) && !(flags & DYN_COMP_CPU))
         static_test_lookup_features_kernel<<<32, 512>>>(dev_cache_storage, dev_cache_key, 
             dev_cache_offset, num_nodes, feature_len, input_feats, index_array, 
             num_gpus, num_ways, num_sets, success_lookups, keys_found);

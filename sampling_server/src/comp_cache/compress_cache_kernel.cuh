@@ -79,6 +79,38 @@ __global__ void compressed_insert_features_kernel(
     }
 }
 
+__global__ void uncompressed_insert_features_kernel(
+    void *cache, int **cache_key, ull **cache_val, 
+    int gpu_id, int num_gpus, int64_t num_nodes, int64_t feature_len, 
+    float *cpu_features, int32_t *index_array,
+    int num_ways, int32_t num_sets,
+    int *failed_inserts = nullptr)
+{
+    int threadId = threadIdx.x + blockIdx.x * blockDim.x;
+    int warpId = threadId / DWARP_SIZE;
+    int laneId = threadIdx.x % DWARP_SIZE;
+    int numWarps = (blockDim.x * gridDim.x) / DWARP_SIZE;
+    for(int i = warpId; i < num_nodes; i += numWarps) {
+        int64_t insert_size = feature_len * sizeof(float);
+        int64_t start_offset = feature_len * sizeof(float) * i;
+        __syncwarp();
+        int64_t nodeId = index_array[i];
+        // Uncompressed insert
+        memcpy_warp((float *)((char *)cache + start_offset), 
+                    &cpu_features[nodeId * feature_len], feature_len);
+        ull value = construct_hash_ptr(start_offset, gpu_id, 0);
+        __syncwarp();
+        
+        // Attempt an insert. Check if there's enough space for padded read on both sides
+        int slot = static_insert_single_feature(cache_key, cache_val, nodeId, value, 
+            num_gpus, num_ways, num_sets);
+        // Increment fail counter if appropriate
+        if(slot < 0 && failed_inserts != nullptr && laneId == 0) {
+            atomicAdd(failed_inserts, 1);
+        }
+    }
+}
+
 __global__ void decompressed_cpu_features_kernel(
     int32_t *mask, int32_t *bitval, int32_t *input_features, int32_t *output_features, 
     int64_t total_nodes, int64_t feature_len, int32_t *bitmask, 
@@ -349,6 +381,91 @@ __global__ void compress_cpu_transfer_kernel(void **dev_cache, int64_t *cache_in
                 decompress_and_write((int32_t*)&output_features[i * feature_len], 
                     (int32_t*)&((char*)dev_cache[gpu_id])[offset], 
                     shm_mask, shm_bitval, feature_len);
+            }
+        }
+    }
+}
+
+template<bool FITS_SHMEM>
+__global__ void compress_cpu_transfer_kernel2_tb(void **dev_cache, int64_t *cache_index, 
+    int64_t num_nodes, int64_t feature_len, int64_t compressed_len, float *output_features, int32_t *bitmask,
+    float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval, 
+    int32_t total_nodes, int num_ways, int32_t num_sets, int shmem_size,
+    ull *misses, ull *lookups, ull *inserts, int SHM_META, int SHM_WORK) {
+    
+    extern __shared__ int shmem[];
+    int offset = 0;
+    int32_t *workspace = (int32_t*)&shmem[(threadIdx.y * (SHM_META + SHM_WORK)) / sizeof(int32_t)];
+    offset = (blockDim.y * (SHM_META + SHM_WORK)) / sizeof(int32_t);
+    int32_t *shm_comm = (int32_t*)&shmem[offset + threadIdx.y * blockDim.x / DWARP_SIZE];
+    offset += blockDim.y * blockDim.x / DWARP_SIZE;
+    // Retain shmem_size as the number of elements in shmem thingies
+    shmem_size -= offset * sizeof(int32_t);
+    // Convert bytes to elements per shm_mask/shm_bitval array
+    shmem_size /= 2;
+    int32_t *shm_mask = (int32_t*)&shmem[offset];
+    int32_t *shm_bitval = (int32_t*)&shmem[offset + shmem_size / sizeof(int32_t)];
+    //cuda::pipeline<cuda::thread_scope_thread> pipe = cuda::make_pipeline();
+    //pipe.producer_acquire();
+    for(int i = threadIdx.x + threadIdx.y * blockDim.x; i < shmem_size / sizeof(int32_t); i += blockDim.x * blockDim.y) {
+        //cuda::memcpy_async(&shm_mask[i], &dev_mask[i], sizeof(T), pipe);
+        //cuda::memcpy_async(&shm_bitval[i], &dev_bitval[i], sizeof(T), pipe);
+        shm_mask[i] = dev_mask[i];
+        shm_bitval[i] = dev_bitval[i];
+    }
+    //pipe.producer_commit();
+    //pipe.consumer_wait();
+
+    int32_t *full_mask, *full_bitval;
+    if constexpr(FITS_SHMEM) {
+        full_mask = shm_mask;
+        full_bitval = shm_bitval;
+    } else {
+        full_mask = dev_mask;
+        full_bitval = dev_bitval;
+    }
+    __syncthreads();
+
+    int blockId = blockIdx.x * blockDim.y + threadIdx.y;
+    int numBlocks = gridDim.x * blockDim.y;
+    // Go through node list
+    for(int i = blockId; i < num_nodes; i += numBlocks) {
+        int64_t index = cache_index[i];
+        int32_t nodeId = node_arr[i];
+#ifdef MONITOR_DEEP
+        int laneId = threadIdx.x % DWARP_SIZE;
+        if(laneId == 0)
+            atomicAdd(lookups, 1);
+#endif
+        // Not in cache, manual copy
+        if(index < 0) {
+#ifdef MONITOR_DEEP
+            if(laneId == 0)
+                atomicAdd(misses, 1);
+#endif
+            if(bitmask[nodeId / 32] & (1 << (nodeId % 32))) {
+                ibp::decompress_fetch_blk_cpu<FITS_SHMEM>(
+                    (int32_t*)&output_features[i * feature_len], 
+                    (int32_t*)&cpu_features[nodeId * feature_len], shm_mask, shm_bitval, 
+                    feature_len, compressed_len, workspace, shm_comm, SHM_META, SHM_WORK, 
+                    dev_mask, dev_bitval, shmem_size);
+            } else {
+                memcpy_block(&output_features[i * feature_len], 
+                    &cpu_features[nodeId * feature_len], feature_len);
+            }
+        } else {
+            int64_t gpu_id, compressed;
+            int64_t offset = deconstruct_hash_ptr(index, gpu_id, compressed);
+            if(!compressed){
+                memcpy_block(&output_features[i * feature_len], 
+                    (float*)&(((char*)dev_cache[gpu_id])[offset]), feature_len);
+            } else {
+                /*if(threadIdx.x < 32) {
+                    decompress_and_write((int32_t*)&output_features[i * feature_len], 
+                        (int32_t*)&((char*)dev_cache[gpu_id])[offset], 
+                        full_mask, full_bitval, feature_len);
+                }
+                __syncthreadsX();*/
             }
         }
     }

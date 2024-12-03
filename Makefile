@@ -40,18 +40,19 @@ graphsage:
 		--epoch ${EPOCHS} > ${RESULTS}/${DATASET}/training${POSTFIX}.log
 
 sampling: init clean
-	stdbuf -oL python legion_server.py --dataset_path '${DATASET_PATH}' --dataset_name ${DATASET} \
-		--train_batch_size ${BATCH_SIZE} --gpu_number ${NUM_GPUS} --epoch ${EPOCHS} \
-		--cache_memory ${CACHE_SIZE} --dyn_cache ${DYN_CACHE} ${OTHER_OPTS} > ${RESULTS}/${DATASET}/sampling${POSTFIX}.log
+	stdbuf -oL python legion_server.py --dataset_path '${DATASET_PATH}' \
+		--dataset_name ${DATASET} --train_batch_size ${BATCH_SIZE} \
+		--gpu_number ${NUM_GPUS} --epoch ${EPOCHS} --cache_memory ${CACHE_SIZE} \
+		--dyn_cache ${DYN_CACHE} ${OTHER_OPTS} > ${RESULTS}/${DATASET}/sampling${POSTFIX}.log
 
 extract_%:
 	python scripts/extract_results.py ${RESULTS} $* "unopt dgl compdgl base mod comp cputest opt" > ${RESULTS}/$*.log
 
 extract_expts:
-	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt dgl dglcomp base mod comp cputest opt"
+	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt dgl dglcomp base mod comp cpuonly cputest opt"
 
 extract_expts_single:
-	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt_singlegpu dgl_singlegpu dglcomp_singlegpu base_singlegpu mod_singlegpu comp_singlegpu cputest_singlegpu opt_singlegpu"
+	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt_singlegpu dgl_singlegpu dglcomp_singlegpu base_singlegpu mod_singlegpu comp_singlegpu cpuonly_singlegpu cputest_singlegpu opt_singlegpu"
 
 extract_comptest:
 	python scripts/extract_compression.py ${RESULTS} "pubmed citeseer cora reddit products mag paper100m"
@@ -84,6 +85,16 @@ run_%_all:
 	$(MAKE) run_$*_opt
 	#$(MAKE) run_$*_unopt
 	$(MAKE) extract_$*
+
+run_cpuonly:
+	$(MAKE) run_reddit_cpuonly
+	$(MAKE) run_products_cpuonly
+	$(MAKE) run_cora_ls_cpuonly
+	$(MAKE) run_pubmed_ls_cpuonly
+	$(MAKE) run_citeseer_ls_cpuonly
+	$(MAKE) run_paper100m_cpuonly
+	$(MAKE) run_mag_cpuonly
+
 
 # Command to run with dynamic cache
 %_dyn:
@@ -118,6 +129,9 @@ run_%_all:
 %_cputest:
 	$(MAKE) $* DYN_CACHE=280 POSTFIX=_cputest${POSTFIX}
 
+%_cpuonly:
+	$(MAKE) $* DYN_CACHE=272 POSTFIX=_cpuonly${POSTFIX}
+
 %_dgl:
 	$(MAKE) $* EXPT=dgl_graphsage
  
@@ -136,7 +150,7 @@ run_ukunion:
 	$(MAKE) ${EXPT} DATASET=ukunion FEAT_NUM=116 CLASS_NUM=2
 
 run_cora:
-	$(MAKE) ${EXPT} DATASET=cora FEAT_NUM=8710 CLASS_NUM=70 BATCH_SIZE=1024 EPOCHS=100 CACHE_SIZE=4000000
+	$(MAKE) ${EXPT} DATASET=cora FEAT_NUM=8710 CLASS_NUM=70 BATCH_SIZE=512 EPOCHS=100 CACHE_SIZE=4000000
 
 run_reddit:
 	$(MAKE) ${EXPT} DATASET=reddit FEAT_NUM=602 BATCH_SIZE=1024 CLASS_NUM=50 CACHE_SIZE=5609797
