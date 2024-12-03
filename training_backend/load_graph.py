@@ -98,13 +98,17 @@ def load(dataset_path, dataset_name):
             dtype="int32",
         )
         labels = torch.from_numpy(labels).share_memory_()
-
+        '''
         features = np.fromfile(
             features_path,
             dtype="float32",
         )
         print("Loaded feats")
         features = torch.from_numpy(features).share_memory_()
+        '''
+        import ibp_cuda
+        features = ibp_cuda.read_shared(features_path, [vertices_num, features_dim], torch.float32)
+
     # Reshape and pin features
     features = pin_inplace(features.reshape((vertices_num, features_dim)))
     print(f"Features shared? {features.is_shared()}; pinned? {features.is_pinned()}")
