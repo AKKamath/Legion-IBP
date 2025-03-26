@@ -29,19 +29,19 @@ public:
     cudaCheckError();
   }
   // One-time init function for cache parameters and seed cache values
-  void init_cache(int64_t nodes_per_gpu, int32_t feature_len, float *cpu_features, 
+  void init_cache(int64_t nodes_per_gpu, int32_t feature_len, float *cpu_features,
     int *index_array, int Kg, int dev_start, int64_t total_nodes, DYN_FLAGS flags, int ways = 32);
   // CPU-side functions for cache access
-  void insert_features(void *cache, int64_t num_nodes, int gpu_id, float *input_feats, int32_t *index_array, 
+  void insert_features(void *cache, int64_t num_nodes, int gpu_id, float *input_feats, int32_t *index_array,
     int64_t total_nodes, int *failed_inserts = nullptr);
-  void insert_features_compressed(int64_t &nodes_per_gpu, float *input_feats, int32_t *index_array, 
+  void insert_features_compressed(int64_t &nodes_per_gpu, float *input_feats, int32_t *index_array,
     int64_t total_nodes, int dev_start, int num_gpus, int *failed_inserts = nullptr);
-  void test_lookup_features(int64_t num_nodes, float *input_features, int32_t *index_array, 
+  void test_lookup_features(int64_t num_nodes, float *input_features, int32_t *index_array,
     int *success_lookups = nullptr, int *keys_found = nullptr);
-  void retrieve(int32_t *nodeIds, int64_t num_nodes, int64_t *node_index, cudaStream_t stream, 
+  void retrieve(int32_t *nodeIds, int64_t num_nodes, int64_t *node_index, cudaStream_t stream,
       ull *misses = nullptr, ull *lookups = nullptr, ull *inserts = nullptr);
   void transfer(int32_t *nodeIds, int64_t num_nodes, float *output_buffer, int64_t* cache_index,
-      float *input_feats, int total_nodes, cudaStream_t stream, ull *misses = nullptr, 
+      float *input_feats, int total_nodes, cudaStream_t stream, ull *misses = nullptr,
       ull *accesses = nullptr, ull* inserts = nullptr);
 private:
     // Actual cache storage

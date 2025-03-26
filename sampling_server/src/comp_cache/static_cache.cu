@@ -15,11 +15,11 @@
 bool ibp_print_debug = true;
 using namespace nvcomp;
 
-void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len, 
-                              float *cpu_features, int *index_array, int Kg, 
+void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
+                              float *cpu_features, int *index_array, int Kg,
                               int dev_start, int64_t total_nodes, DYN_FLAGS flags, int ways) {
-    std::cout << "Initializing dynamic cache with " << nodes_per_gpu 
-              << " (out of " << total_nodes << ") per GPU and " 
+    std::cout << "Initializing dynamic cache with " << nodes_per_gpu
+              << " (out of " << total_nodes << ") per GPU and "
               << Kg << " GPUs\n";
     fflush(stdout);
     cudaSetDevice(dev_start);
@@ -39,7 +39,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         chunk_size = 4;
         comp_mask = nullptr;
         comp_bitval = nullptr;
-        compress_len = ibp::preproc_data((int32_t*)cpu_features, total_nodes, 
+        compress_len = ibp::preproc_data((int32_t*)cpu_features, total_nodes,
             feature_len, (int32_t**)&comp_mask, (int32_t**)&comp_bitval);
         printf("Finished compression preprocessing; compressed len %d\n", compress_len);
         fflush(stdout);
@@ -64,10 +64,10 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
 
     // TODO: K-Means based compression
     if(flags & (DYN_COMP | DYN_COMP_CPU | DYN_COMP_TEST)) {
-        //ibp::preproc_kmeans((int32_t*)cpu_features, total_nodes, feature_len, 
+        //ibp::preproc_kmeans((int32_t*)cpu_features, total_nodes, feature_len,
         //    (int32_t**)&comp_mask, (int32_t**)&comp_bitval, 0.5, chunk_size);
     }
-    
+
     //------------------------------
     auto start = TIME_NOW;
     // Allocate size of pointers
@@ -146,7 +146,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         cudaMalloc(&device_uncompressed_bytes, sizeof(size_t) * batch_size);
         cudaMalloc(&device_uncompressed_ptrs, sizeof(size_t) * batch_size);
         cudaCheckError();
-        
+
         cudaMemcpyAsync(device_uncompressed_bytes, host_uncompressed_bytes, sizeof(size_t) * batch_size, cudaMemcpyHostToDevice, stream);
         cudaMemcpyAsync(device_uncompressed_ptrs, host_uncompressed_ptrs, sizeof(size_t) * batch_size, cudaMemcpyHostToDevice, stream);
 
@@ -156,11 +156,11 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         cudaMallocHost(&host_compressed_ptrs, sizeof(size_t) * batch_size);
         // HOST ALLOC
         if(1)
-            cudaMallocHost(&compressed_buffer, 
+            cudaMallocHost(&compressed_buffer,
                 batch_size * 32 * feature_len * sizeof(float));
         // DEVICE ALLOC
         else
-            cudaMalloc(&compressed_buffer, 
+            cudaMalloc(&compressed_buffer,
                 batch_size * 32 * feature_len * sizeof(float));
 
         for(size_t ix_chunk = 0; ix_chunk < batch_size; ++ix_chunk) {
@@ -248,15 +248,15 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         ull *d_comp_size, comp_size = 0;
         cudaMalloc(&d_comp_size, sizeof(ull));
         cudaMemset(d_comp_size, 0, sizeof(ull));
-        ibp::compress_inplace((int32_t*)compressed_buffer, 
-            (int32_t*)cpu_features, nodes_per_gpu, (int64_t)feature_len, 
-            comp_mask, comp_bitval, comp_bitmask, (void*)nullptr, (void*)nullptr, 
+        ibp::compress_inplace((int32_t*)compressed_buffer,
+            (int32_t*)cpu_features, nodes_per_gpu, (int64_t)feature_len,
+            comp_mask, comp_bitval, comp_bitmask, (void*)nullptr, (void*)nullptr,
             d_comp_size, stream);
         cudaMemcpy(&comp_size, d_comp_size, sizeof(ull), cudaMemcpyDeviceToHost);
         printf("%s: Uncompressed bytes: %ld, compressed bytes: %llu, ratio: %f\n",
             "Us", in_bytes, comp_size, (float)in_bytes / comp_size);
         cudaCheckError();
-        
+
         auto kernel = &test_decompressed_features_kernel<true>;
         int shmem_size;
         if(feature_len * sizeof(float) * 2 < maxShmem[0]){
@@ -275,7 +275,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         }
         decomp_start = TIME_NOW;
         kernel<<<sm_count, 256, shmem_size>>>(
-            comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data, 
+            comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data,
             nodes_per_gpu, feature_len, comp_bitmask, 4);
         cudaDeviceSynchronize();
         cudaCheckError();
@@ -293,10 +293,10 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
                 break;
             }
         }
-        
+
         cudaMemset(device_output_data, 0, in_bytes);
         decomp_start = TIME_NOW;
-        ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer, 
+        ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer,
             nodes_per_gpu, (int64_t)feature_len, comp_mask, comp_bitval, comp_bitmask,
             (int)(((float)comp_size / (float)in_bytes) * feature_len), stream, sm_count, 512);
         cudaDeviceSynchronize();
@@ -315,10 +315,10 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
                 break;
             }
         }
-        
+
         cudaMemset(device_output_data, 0, in_bytes);
         decomp_start = TIME_NOW;
-        ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer, 
+        ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer,
             nodes_per_gpu, (int64_t)feature_len, comp_mask, comp_bitval, comp_bitmask,
             (int)(((float)comp_size / (float)in_bytes) * feature_len), stream, sm_count * 4, 512, 1);
         cudaDeviceSynchronize();
@@ -337,10 +337,10 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
                 break;
             }
         }
-        
+
         cudaMemset(device_output_data, 0, in_bytes);
         decomp_start = TIME_NOW;
-        ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer, 
+        ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer,
             nodes_per_gpu, (int64_t)feature_len, comp_mask, comp_bitval, comp_bitmask,
             (int)(((float)comp_size / (float)in_bytes) * feature_len), stream, sm_count * 4, 512, -1);
         cudaDeviceSynchronize();
@@ -364,7 +364,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         cudaMemset(comp_bitmask, 0, (nodes_per_gpu + 31) / 32 * sizeof(int32_t));
         decomp_start = TIME_NOW;
         decompressed_cpu_features_kernel<<<sm_count, 512>>>(
-            comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data, 
+            comp_mask, comp_bitval, (int32_t*)compressed_buffer, (int32_t*)device_output_data,
             nodes_per_gpu, feature_len, comp_bitmask);
         cudaDeviceSynchronize();
         decomp_end = TIME_NOW;
@@ -390,7 +390,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             int device_id = i + dev_start;
             cudaSetDevice(device_id);
             // Insert features into the cache
-            insert_features(host_cache_storage[i], nodes_per_gpu, i, cpu_features, 
+            insert_features(host_cache_storage[i], nodes_per_gpu, i, cpu_features,
                 &index_array[nodes_per_gpu * i], total_nodes, dev_tracker);
         }
     } else if(!(flags & DYN_COMP) && (flags & DYN_CPU_TEST2)) {
@@ -399,12 +399,12 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
             cudaSetDevice(device_id);
             // Insert features into the cache
             uncompressed_insert_features_kernel<<<32, 512>>>(
-                host_cache_storage[i], dev_cache_key, dev_cache_offset, 
+                host_cache_storage[i], dev_cache_key, dev_cache_offset,
                 device_id, num_gpus, nodes_per_gpu, feature_len, cpu_features,
                 &index_array[nodes_per_gpu * i], num_ways, num_sets, dev_tracker);
         }
     } else {
-        insert_features_compressed(nodes_per_gpu, cpu_features, index_array, 
+        insert_features_compressed(nodes_per_gpu, cpu_features, index_array,
             total_nodes, dev_start, num_gpus, dev_tracker);
     }
     cudaDeviceSynchronize();
@@ -417,7 +417,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     cudaMemcpy(&failed_inserts, dev_tracker, sizeof(int), cudaMemcpyDeviceToHost);
     cudaCheckError();
     std::cout << "Failed inserts: " << failed_inserts << " out of " << num_nodes << "\n";
-    
+
     // Reset variable for tracking operations
     cudaMemset(dev_tracker, 0, sizeof(int));
     cudaCheckError();
@@ -428,24 +428,24 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
 
     int success_searches[2];
     cudaMemcpy(&success_searches, dev_tracker, 2 * sizeof(int), cudaMemcpyDeviceToHost);
-    std::cout << "Keys found: " << success_searches[1] << ", successful searches: " 
+    std::cout << "Keys found: " << success_searches[1] << ", successful searches: "
             << success_searches[0] << " out of " << num_nodes << "\n";
-    
+
     cudaFree(dev_tracker);
     free(host_cache_offset_ptr);
     free(host_cache_key_ptr);
     if(flags & DYN_COMP_CPU) {
         cudaMalloc(&comp_bitmask, (total_nodes + 31) / 32 * sizeof(int32_t));
         cudaCheckError();
-        ibp::compress_inplace((int32_t*)cpu_features, 
-            (int32_t*)cpu_features, total_nodes, feature_len, 
+        ibp::compress_inplace((int32_t*)cpu_features,
+            (int32_t*)cpu_features, total_nodes, feature_len,
             comp_mask, comp_bitval, comp_bitmask);
         cudaCheckError();
         /*
         // Test if compressed CPU features match when decompressed.
         int32_t *decomp;
         cudaMallocHost(&decomp, total_nodes * feature_len * sizeof(int32_t));
-        decompressed_cpu_features_kernel<<<32, 512>>>(comp_mask, comp_bitval, (int32_t*)cpu_features, 
+        decompressed_cpu_features_kernel<<<32, 512>>>(comp_mask, comp_bitval, (int32_t*)cpu_features,
             decomp, total_nodes, feature_len, working_space, comp_bitmask);
         cudaDeviceSynchronize();
         int match = true;
@@ -453,8 +453,8 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         for(int j = 0; j < total_nodes; ++j) {
             for(i = 0; i < feature_len; ++i) {
                 if(((int32_t *)decomp_cpu_vals)[j * feature_len + i] != decomp[j * feature_len + i]) {
-                    printf("Mishmatch at %d, %d. Expected %x, got %x\n", j, i, 
-                        *(unsigned*)&decomp_cpu_vals[j * feature_len + i], 
+                    printf("Mishmatch at %d, %d. Expected %x, got %x\n", j, i,
+                        *(unsigned*)&decomp_cpu_vals[j * feature_len + i],
                         *(unsigned*)&decomp[j * feature_len + i]);
                     match = false;
                     break;
@@ -473,16 +473,16 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
 }
 
 // Bulk insert into cache, setting appropriate values
-void StaticCache::insert_features(void *cache, int64_t num_nodes, int gpu, float *input_feats, 
+void StaticCache::insert_features(void *cache, int64_t num_nodes, int gpu, float *input_feats,
     int32_t *index_array, int64_t total_nodes, int *failed_inserts)
 {
-    static_insert_features_kernel<<<16, 512>>>(cache, dev_cache_key, 
-        dev_cache_offset, gpu, num_gpus, num_nodes, feature_len, input_feats, index_array, 
+    static_insert_features_kernel<<<16, 512>>>(cache, dev_cache_key,
+        dev_cache_offset, gpu, num_gpus, num_nodes, feature_len, input_feats, index_array,
         total_nodes, num_ways, num_sets, flags, failed_inserts);
 }
 
 // Bulk compress and insert into cache, setting appropriate values
-void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *input_feats, 
+void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *input_feats,
     int32_t *index_array, int64_t total_nodes, int dev_start, int num_gpus, int *failed_inserts)
 {
     int64_t size_per_gpu = nodes_per_gpu * sizeof(float) * feature_len;
@@ -503,18 +503,18 @@ void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *inpu
         cudaSetDevice(device_id);
         cudaMemset(comp_size, 0, nodes_per_gpu * sizeof(int64_t));
         // Check space taken by compressed data
-        ibp::check_compress_size_kernel<<<32, 512>>>((int32_t *)input_feats, 
-            nodes_per_gpu, feature_len, (int32_t *)comp_mask, (int32_t *)comp_bitval, 
+        ibp::check_compress_size_kernel<<<32, 512>>>((int32_t *)input_feats,
+            nodes_per_gpu, feature_len, (int32_t *)comp_mask, (int32_t *)comp_bitval,
             comp_size, &index_array[inserted_feats]);
         cudaCheckError();
         thrust::inclusive_scan(thrust::device, comp_size, comp_size + nodes_per_gpu, comp_size);
-        fprintf(stderr, "Cache %p, size %ld (End: %p)\n", host_cache_storage[i], size_per_gpu, 
+        fprintf(stderr, "Cache %p, size %ld (End: %p)\n", host_cache_storage[i], size_per_gpu,
             (void*)((char*)host_cache_storage[i] + size_per_gpu));
         // Compress and insert data
-        compressed_insert_features_kernel<<<16, 256>>>(host_cache_storage[i], 
+        compressed_insert_features_kernel<<<16, 256>>>(host_cache_storage[i],
             dev_cache_key, dev_cache_offset, comp_mask, comp_bitval, comp_size, inserted_per_gpu[i],
-            i, num_gpus, nodes_per_gpu, feature_len, input_feats, 
-            &index_array[inserted_feats], total_nodes, num_ways, num_sets, 
+            i, num_gpus, nodes_per_gpu, feature_len, input_feats,
+            &index_array[inserted_feats], total_nodes, num_ways, num_sets,
             flags, chunk_size, failed_inserts);
         cudaDeviceSynchronize();
         cudaCheckError();
@@ -524,7 +524,7 @@ void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *inpu
         inserted_feats += nodes_per_gpu;
         inserted_per_gpu[i] += *inserted_size;
     }
-    printf("Inserted %d compressed feats so far (expected at least %lu)\n", 
+    printf("Inserted %d compressed feats so far (expected at least %lu)\n",
         inserted_feats, nodes_per_gpu * num_gpus);
     fflush(stdout);
     // Keep inserting features while we have space
@@ -532,23 +532,23 @@ void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *inpu
         int device_id = i + dev_start;
         cudaSetDevice(device_id);
         int64_t feats_to_insert = 0;
-        while(inserted_per_gpu[i] + feature_len * sizeof(float) <= size_per_gpu && 
+        while(inserted_per_gpu[i] + feature_len * sizeof(float) <= size_per_gpu &&
             inserted_feats < total_nodes) {
             feats_to_insert = (size_per_gpu - inserted_per_gpu[i]) / (feature_len * sizeof(float));
             feats_to_insert = min(feats_to_insert, total_nodes - inserted_feats);
             cudaMemset(comp_size, 0, feats_to_insert * sizeof(int64_t));
             // Check space taken by compressed data
-            ibp::check_compress_size_kernel<<<32, 512>>>((int32_t *)input_feats, 
-                feats_to_insert, feature_len, (int32_t *)comp_mask, 
+            ibp::check_compress_size_kernel<<<32, 512>>>((int32_t *)input_feats,
+                feats_to_insert, feature_len, (int32_t *)comp_mask,
                 (int32_t *)comp_bitval, comp_size, &index_array[inserted_feats]);
             cudaCheckError();
             thrust::inclusive_scan(thrust::device, comp_size, comp_size + feats_to_insert, comp_size);
             // Compress and insert the data
-            compressed_insert_features_kernel<<<16, 256>>>(host_cache_storage[i], 
+            compressed_insert_features_kernel<<<16, 256>>>(host_cache_storage[i],
                 dev_cache_key, dev_cache_offset, comp_mask, comp_bitval, comp_size, inserted_per_gpu[i],
-                i, num_gpus, feats_to_insert, feature_len, input_feats, &index_array[inserted_feats], total_nodes, 
+                i, num_gpus, feats_to_insert, feature_len, input_feats, &index_array[inserted_feats], total_nodes,
                 num_ways, num_sets, flags, chunk_size, failed_inserts);
-            cudaMemcpy(inserted_size, &comp_size[feats_to_insert - 1], 
+            cudaMemcpy(inserted_size, &comp_size[feats_to_insert - 1],
                 sizeof(int64_t), cudaMemcpyDeviceToHost);
             cudaCheckError();
             printf("Inserted %ld compressed feat on gpu %d\n", feats_to_insert, i);
@@ -559,7 +559,7 @@ void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *inpu
     }
     cudaFree(comp_size);
     cudaFreeHost(inserted_size);
-    printf("Inserted %d compressed feats (expected at least %lu)\n", 
+    printf("Inserted %d compressed feats (expected at least %lu)\n",
         inserted_feats, nodes_per_gpu * num_gpus);
     nodes_per_gpu = inserted_feats / num_gpus;
     /*
@@ -584,7 +584,7 @@ void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *inpu
     for(int j = 0; j < 2*inserted_feats; ++j)
         for(i = 0; i < feature_len; ++i) {
             if(input_feats[h_index_arr[j] * feature_len + i] != h_output_feats[j * feature_len + i]) {
-                printf("Mishmatch at %d (%d). Expected %x, got %x\n", i, 
+                printf("Mishmatch at %d (%d). Expected %x, got %x\n", i,
                     h_index_arr[j], *(unsigned*)&input_feats[h_index_arr[j] * feature_len + i], *(unsigned*)&h_output_feats[j * feature_len + i]);
                 match = false;
                 break;
@@ -598,12 +598,12 @@ void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *inpu
 }
 
 // Find features in cache
-void StaticCache::test_lookup_features(int64_t num_nodes, float *input_feats, 
+void StaticCache::test_lookup_features(int64_t num_nodes, float *input_feats,
     int32_t *index_array, int *success_lookups, int *keys_found)
 {
     if(!(flags & DYN_COMP) && !(flags & DYN_COMP_CPU))
-        static_test_lookup_features_kernel<<<32, 512>>>(dev_cache_storage, dev_cache_key, 
-            dev_cache_offset, num_nodes, feature_len, input_feats, index_array, 
+        static_test_lookup_features_kernel<<<32, 512>>>(dev_cache_storage, dev_cache_key,
+            dev_cache_offset, num_nodes, feature_len, input_feats, index_array,
             num_gpus, num_ways, num_sets, success_lookups, keys_found);
     else {
         auto kernel = &compressed_test_lookup_features_kernel<true>;
@@ -623,22 +623,22 @@ void StaticCache::test_lookup_features(int64_t num_nodes, float *input_feats,
             cudaCheckError();
         }
         kernel<<<32, 512, shmem_size>>>
-            (dev_cache_storage, dev_cache_key, dev_cache_offset, comp_mask, comp_bitval, 
-            num_nodes, feature_len, input_feats, index_array, num_gpus, num_ways, num_sets, 
+            (dev_cache_storage, dev_cache_key, dev_cache_offset, comp_mask, comp_bitval,
+            num_nodes, feature_len, input_feats, index_array, num_gpus, num_ways, num_sets,
             success_lookups, keys_found, 4);
     }
 }
 
-void StaticCache::retrieve(int32_t *nodeIds, int64_t num_nodes, int64_t *node_index, 
+void StaticCache::retrieve(int32_t *nodeIds, int64_t num_nodes, int64_t *node_index,
     cudaStream_t stream, ull *misses, ull *lookups, ull *inserts)
 {
     static_retrieve_kernel<<<32, 512, 0, stream>>>(
-        dev_cache_key, dev_cache_offset, node_index, num_nodes, 
+        dev_cache_key, dev_cache_offset, node_index, num_nodes,
         nodeIds, num_gpus, num_ways, num_sets, flags, misses, lookups, inserts);
 }
 
-void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_buffer, 
-    int64_t *node_index, float *input_feats, int total_nodes, cudaStream_t stream, 
+void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_buffer,
+    int64_t *node_index, float *input_feats, int total_nodes, cudaStream_t stream,
     ull *misses, ull *lookups, ull *inserts)
 {
     // Tested for V100, A100. Adjust as needed for your GPU
@@ -668,13 +668,12 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
             cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
             cudaCheckError();
         }
-        
-        kernel<<<NBLOCKS, NTHREADS, shmem_size, stream>>>(dev_cache_storage, 
-            node_index, num_nodes, feature_len, compress_len, output_buffer, comp_bitmask, input_feats, 
+
+        kernel<<<NBLOCKS, NTHREADS, shmem_size, stream>>>(dev_cache_storage,
+            node_index, num_nodes, feature_len, compress_len, output_buffer, comp_bitmask, input_feats,
             nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets, shmem_size,
             misses, lookups, inserts);
-    }
-    else {
+    } else {
         if(flags & DYN_COMP_CPU) {
             auto kernel = &compress_cpu_transfer_kernel<true>;
             // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
@@ -686,14 +685,14 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
                 shmem_size = 0;
                 kernel = &compress_cpu_transfer_kernel<false>;
             }
-            
+
             // Need opt-in for large shmem allocations
             if (shmem_size >= 48 * 1024) {
                 cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
                 cudaCheckError();
             }
-            kernel<<<NBLOCKS, NTHREADS, shmem_size, stream>>>(dev_cache_storage, 
-                node_index, num_nodes, feature_len, output_buffer, comp_bitmask, input_feats, 
+            kernel<<<NBLOCKS, NTHREADS, shmem_size, stream>>>(dev_cache_storage,
+                node_index, num_nodes, feature_len, output_buffer, comp_bitmask, input_feats,
                 nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets,
                 misses, lookups, inserts);
         }
@@ -709,22 +708,22 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
                 shmem_size = 0;
                 kernel = &compress_transfer_kernel<false>;
             }
-            
+
             // Need opt-in for large shmem allocations
             if (shmem_size >= 48 * 1024) {
                 cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
                 cudaCheckError();
             }
-            kernel<<<NBLOCKS, NTHREADS, shmem_size, stream>>>(dev_cache_storage, 
-                node_index, num_nodes, feature_len, output_buffer, 
+            kernel<<<NBLOCKS, NTHREADS, shmem_size, stream>>>(dev_cache_storage,
+                node_index, num_nodes, feature_len, output_buffer,
                 input_feats, nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets,
                 misses, lookups, inserts);
         }
         else
             static_transfer_kernel<<<NBLOCKS, NTHREADS, 0, stream>>>(
-                dev_cache_storage, dev_cache_key, dev_cache_offset, node_index, num_nodes, 
-                feature_len, output_buffer, input_feats, nodeIds, 0, num_gpus, total_nodes, 
+                dev_cache_storage, dev_cache_key, dev_cache_offset, node_index, num_nodes,
+                feature_len, output_buffer, input_feats, nodeIds, 0, num_gpus, total_nodes,
                 num_ways, num_sets, flags, misses, lookups, inserts);
     }
-    
+
 }

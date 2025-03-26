@@ -7,8 +7,6 @@
 #define CACHED_NODES 100
 #define FEAT_SIZE 256
 
-
-
 int main() {
     DynamicCache cache;
     float *cpu_features = (float*)malloc(FEAT_SIZE * sizeof(float) * TOTAL_NODES);

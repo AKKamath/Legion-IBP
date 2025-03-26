@@ -32,7 +32,7 @@ int main() {
     for(int i = 0; i < HOTSET; ++i) {
         hotset[i] = rand() % TOTAL_NODES;
     }
-    
+
     float *output_buffer;
     cudaMalloc(&output_buffer, sizeof(float) * FEAT_SIZE * NODES_PER_ITER);
     cudaCheckError();
@@ -41,7 +41,7 @@ int main() {
     cudaMalloc(&accesses, sizeof(ull));
     cudaMalloc(&inserts, sizeof(ull));
     cudaCheckError();
-    
+
     int *nodeIds = (int*)malloc(sizeof(int) * NODES_PER_ITER);
     cudaHostRegister(nodeIds, sizeof(int) * NODES_PER_ITER, cudaHostRegisterDefault);
     for(int iter = 0; iter < ITERS; ++iter) {
@@ -54,9 +54,9 @@ int main() {
         cudaMemset(misses, 0, sizeof(ull));
         cudaMemset(accesses, 0, sizeof(ull));
         cudaMemset(inserts, 0, sizeof(ull));
-        cache.retrieve_and_touch(nodeIds, NODES_PER_ITER, output_buffer, cpu_features, TOTAL_NODES, 
+        cache.retrieve_and_touch(nodeIds, NODES_PER_ITER, output_buffer, cpu_features, TOTAL_NODES,
                 0, misses, accesses, inserts);
-        
+
         ull host_misses, host_accesses, host_inserts;
         cudaMemcpy(&host_misses, misses, sizeof(ull), cudaMemcpyDeviceToHost);
         cudaMemcpy(&host_accesses, accesses, sizeof(ull), cudaMemcpyDeviceToHost);

@@ -14,7 +14,7 @@
 #define COMP_MASK ((1L << COMP_BITS) - 1L)
 __inline__ __device__ int64_t construct_hash_ptr(int64_t offset, int64_t gpu_id, int64_t compressed)
 {
-    return  (offset & OFFSET_MASK) | 
+    return  (offset & OFFSET_MASK) |
             ((gpu_id & GPU_MASK) << (OFFSET_BITS)) |
             ((compressed & COMP_MASK) << (GPU_BITS + OFFSET_BITS));
 }
@@ -27,10 +27,10 @@ __inline__ __device__ int64_t deconstruct_hash_ptr(int64_t ptr, int64_t &gpu_id,
 }
 
 __global__ void compressed_insert_features_kernel(
-    void *cache, int **cache_key, ull **cache_val, 
+    void *cache, int **cache_key, ull **cache_val,
     int *mask, int *bitval, int64_t *comp_size, int32_t prev_offset,
-    int gpu_id, int num_gpus, int64_t num_nodes, int64_t feature_len, 
-    float *cpu_features, int32_t *index_array, int64_t total_nodes, 
+    int gpu_id, int num_gpus, int64_t num_nodes, int64_t feature_len,
+    float *cpu_features, int32_t *index_array, int64_t total_nodes,
     int num_ways, int32_t num_sets, int dyn_flags, int chunk_size = 4,
     int *failed_inserts = nullptr)
 {
@@ -54,23 +54,23 @@ __global__ void compressed_insert_features_kernel(
         // Insert either uncompressed or compressed
         if(insert_size == feature_len * sizeof(float)) {
             // Uncompressed insert
-            memcpy_warp((float *)((char *)cache + start_offset), 
+            memcpy_warp((float *)((char *)cache + start_offset),
                         &cpu_features[nodeId * feature_len], feature_len);
             value = construct_hash_ptr(start_offset, gpu_id, 0);
         } else {
             // Compressed insert
-            ibp::compress_and_write((int32_t *)((char *)cache + start_offset), 
-                (int32_t *)&cpu_features[nodeId * feature_len], 
+            ibp::compress_and_write((int32_t *)((char *)cache + start_offset),
+                (int32_t *)&cpu_features[nodeId * feature_len],
                 feature_len, mask, bitval);
             value = construct_hash_ptr(start_offset, gpu_id, 1);
             //if(laneId == 0)
-            //    printf("%p: Ptr %lx, val %lx\n", ((char *)cache + start_offset), 
+            //    printf("%p: Ptr %lx, val %lx\n", ((char *)cache + start_offset),
             //        start_offset, value);
         }
         __syncwarp();
-        
+
         // Attempt an insert. Check if there's enough space for padded read on both sides
-        int slot = static_insert_single_feature(cache_key, cache_val, nodeId, value, 
+        int slot = static_insert_single_feature(cache_key, cache_val, nodeId, value,
             num_gpus, num_ways, num_sets);
         // Increment fail counter if appropriate
         if(slot < 0 && failed_inserts != nullptr && laneId == 0) {
@@ -80,8 +80,8 @@ __global__ void compressed_insert_features_kernel(
 }
 
 __global__ void uncompressed_insert_features_kernel(
-    void *cache, int **cache_key, ull **cache_val, 
-    int gpu_id, int num_gpus, int64_t num_nodes, int64_t feature_len, 
+    void *cache, int **cache_key, ull **cache_val,
+    int gpu_id, int num_gpus, int64_t num_nodes, int64_t feature_len,
     float *cpu_features, int32_t *index_array,
     int num_ways, int32_t num_sets,
     int *failed_inserts = nullptr)
@@ -96,13 +96,13 @@ __global__ void uncompressed_insert_features_kernel(
         __syncwarp();
         int64_t nodeId = index_array[i];
         // Uncompressed insert
-        memcpy_warp((float *)((char *)cache + start_offset), 
+        memcpy_warp((float *)((char *)cache + start_offset),
                     &cpu_features[nodeId * feature_len], feature_len);
         ull value = construct_hash_ptr(start_offset, gpu_id, 0);
         __syncwarp();
-        
+
         // Attempt an insert. Check if there's enough space for padded read on both sides
-        int slot = static_insert_single_feature(cache_key, cache_val, nodeId, value, 
+        int slot = static_insert_single_feature(cache_key, cache_val, nodeId, value,
             num_gpus, num_ways, num_sets);
         // Increment fail counter if appropriate
         if(slot < 0 && failed_inserts != nullptr && laneId == 0) {
@@ -112,8 +112,8 @@ __global__ void uncompressed_insert_features_kernel(
 }
 
 __global__ void decompressed_cpu_features_kernel(
-    int32_t *mask, int32_t *bitval, int32_t *input_features, int32_t *output_features, 
-    int64_t total_nodes, int64_t feature_len, int32_t *bitmask, 
+    int32_t *mask, int32_t *bitval, int32_t *input_features, int32_t *output_features,
+    int64_t total_nodes, int64_t feature_len, int32_t *bitmask,
     int chunk_size = 4)
 {
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
@@ -123,7 +123,7 @@ __global__ void decompressed_cpu_features_kernel(
     for(int i = warpId; i < total_nodes; i += numWarps) {
         // Compressed insert
         if(bitmask[i / 32] & (1 << (i % 32))){
-            decompress_and_write(&output_features[i * feature_len], (int32_t *)&input_features[i * feature_len], 
+            decompress_and_write(&output_features[i * feature_len], (int32_t *)&input_features[i * feature_len],
                 mask, bitval, feature_len, chunk_size);
         } else {
             for(int j = laneId; j < feature_len; j += DWARP_SIZE) {
@@ -135,7 +135,7 @@ __global__ void decompressed_cpu_features_kernel(
 
 template<bool FITS_SHMEM>
 __global__ void test_decompressed_features_kernel(
-    int32_t *mask, int32_t *bitval, int32_t *input_features, int32_t *output_features, 
+    int32_t *mask, int32_t *bitval, int32_t *input_features, int32_t *output_features,
     int64_t total_nodes, int64_t feature_len, int32_t *bitmask, int chunk_size = 4)
 {
     extern __shared__ int32_t shared_mem[];
@@ -157,10 +157,10 @@ __global__ void test_decompressed_features_kernel(
     for(int i = warpId; i < total_nodes; i += numWarps) {
         // Compressed insert
         if(bitmask[i / 32] & (1 << (i % 32))){
-            decompress_and_write(&output_features[i * feature_len], (int32_t *)&input_features[i * feature_len], 
+            decompress_and_write(&output_features[i * feature_len], (int32_t *)&input_features[i * feature_len],
                 shm_mask, shm_bitval, feature_len, chunk_size);
         } else {
-            memcpy_warp(&output_features[i * feature_len], 
+            memcpy_warp(&output_features[i * feature_len],
                         &input_features[i * feature_len], feature_len);
         }
         __syncwarp();
@@ -170,9 +170,9 @@ __global__ void test_decompressed_features_kernel(
 // [TEST] Check if features properly copied into cache
 template <bool FITS_SHMEM>
 __global__ void compressed_test_lookup_features_kernel(
-    void **dev_cache, int **dev_cache_key, ull **dev_cache_val, int32_t *dev_mask, 
-    int32_t *dev_bitval, int64_t num_nodes, int64_t feature_len, void *cpu_features, 
-    int32_t *index_array, int num_gpus, int num_ways, int32_t num_sets, 
+    void **dev_cache, int **dev_cache_key, ull **dev_cache_val, int32_t *dev_mask,
+    int32_t *dev_bitval, int64_t num_nodes, int64_t feature_len, void *cpu_features,
+    int32_t *index_array, int num_gpus, int num_ways, int32_t num_sets,
     int *success_lookups = nullptr, int *keys_found = nullptr, int32_t chunk_size = 4)
 {
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
@@ -305,7 +305,7 @@ __global__ void compressed_test_lookup_features_kernel(
 
                         }
                         if(*shm_workspace != host_features[i]) {
-                            printf("%p %d: Expected %x (%p), got %x; comp? %d\n", 
+                            printf("%p %d: Expected %x (%p), got %x; comp? %d\n",
                                 dev_features, i, host_features[i], host_features + i, *shm_workspace, compressed_feat);
                             match = 0;
                         }
@@ -325,12 +325,12 @@ __global__ void compressed_test_lookup_features_kernel(
 }
 
 template <bool FITS_SHMEM>
-__global__ void compress_cpu_transfer_kernel(void **dev_cache, int64_t *cache_index, 
+__global__ void compress_cpu_transfer_kernel(void **dev_cache, int64_t *cache_index,
     int64_t num_nodes, int64_t feature_len, float *output_features, int32_t *bitmask,
-    float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval, 
+    float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval,
     int32_t total_nodes, int num_ways, int32_t num_sets,
     ull *misses, ull *lookups, ull *inserts) {
-    
+
     extern __shared__ int32_t shared_mem[];
     int32_t *shm_mask = shared_mem, *shm_bitval = &shared_mem[feature_len];
     if constexpr(FITS_SHMEM) {
@@ -364,22 +364,22 @@ __global__ void compress_cpu_transfer_kernel(void **dev_cache, int64_t *cache_in
                 atomicAdd(misses, 1);
 #endif
             if(bitmask[i / 32] & (1 << (i % 32))) {
-                decompress_and_write((int32_t*)&output_features[i * feature_len], 
-                    (int32_t*)&cpu_features[nodeId * feature_len], 
+                decompress_and_write((int32_t*)&output_features[i * feature_len],
+                    (int32_t*)&cpu_features[nodeId * feature_len],
                     shm_mask, shm_bitval, feature_len);
             } else {
-                memcpy_warp(&output_features[i * feature_len], 
+                memcpy_warp(&output_features[i * feature_len],
                     &cpu_features[nodeId * feature_len], feature_len);
             }
         } else {
             int64_t gpu_id, compressed;
             int64_t offset = deconstruct_hash_ptr(index, gpu_id, compressed);
             if(!compressed){
-                memcpy_warp(&output_features[i * feature_len], 
+                memcpy_warp(&output_features[i * feature_len],
                     (float*)&(((char*)dev_cache[gpu_id])[offset]), feature_len);
             } else {
-                decompress_and_write((int32_t*)&output_features[i * feature_len], 
-                    (int32_t*)&((char*)dev_cache[gpu_id])[offset], 
+                decompress_and_write((int32_t*)&output_features[i * feature_len],
+                    (int32_t*)&((char*)dev_cache[gpu_id])[offset],
                     shm_mask, shm_bitval, feature_len);
             }
         }
@@ -387,12 +387,12 @@ __global__ void compress_cpu_transfer_kernel(void **dev_cache, int64_t *cache_in
 }
 
 template<bool FITS_SHMEM>
-__global__ void compress_cpu_transfer_kernel2_tb(void **dev_cache, int64_t *cache_index, 
+__global__ void compress_cpu_transfer_kernel2_tb(void **dev_cache, int64_t *cache_index,
     int64_t num_nodes, int64_t feature_len, int64_t compressed_len, float *output_features, int32_t *bitmask,
-    float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval, 
+    float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval,
     int32_t total_nodes, int num_ways, int32_t num_sets, int shmem_size,
     ull *misses, ull *lookups, ull *inserts, int SHM_META, int SHM_WORK) {
-    
+
     extern __shared__ int shmem[];
     int offset = 0;
     int32_t *workspace = (int32_t*)&shmem[(threadIdx.y * (SHM_META + SHM_WORK)) / sizeof(int32_t)];
@@ -445,24 +445,24 @@ __global__ void compress_cpu_transfer_kernel2_tb(void **dev_cache, int64_t *cach
 #endif
             if(bitmask[nodeId / 32] & (1 << (nodeId % 32))) {
                 ibp::decompress_fetch_blk_cpu<FITS_SHMEM>(
-                    (int32_t*)&output_features[i * feature_len], 
-                    (int32_t*)&cpu_features[nodeId * feature_len], shm_mask, shm_bitval, 
-                    feature_len, compressed_len, workspace, shm_comm, SHM_META, SHM_WORK, 
+                    (int32_t*)&output_features[i * feature_len],
+                    (int32_t*)&cpu_features[nodeId * feature_len], shm_mask, shm_bitval,
+                    feature_len, compressed_len, workspace, shm_comm, SHM_META, SHM_WORK,
                     dev_mask, dev_bitval, shmem_size);
             } else {
-                memcpy_block(&output_features[i * feature_len], 
+                memcpy_block(&output_features[i * feature_len],
                     &cpu_features[nodeId * feature_len], feature_len);
             }
         } else {
             int64_t gpu_id, compressed;
             int64_t offset = deconstruct_hash_ptr(index, gpu_id, compressed);
             if(!compressed){
-                memcpy_block(&output_features[i * feature_len], 
+                memcpy_block(&output_features[i * feature_len],
                     (float*)&(((char*)dev_cache[gpu_id])[offset]), feature_len);
             } else {
                 /*if(threadIdx.x < 32) {
-                    decompress_and_write((int32_t*)&output_features[i * feature_len], 
-                        (int32_t*)&((char*)dev_cache[gpu_id])[offset], 
+                    decompress_and_write((int32_t*)&output_features[i * feature_len],
+                        (int32_t*)&((char*)dev_cache[gpu_id])[offset],
                         full_mask, full_bitval, feature_len);
                 }
                 __syncthreadsX();*/
@@ -472,12 +472,12 @@ __global__ void compress_cpu_transfer_kernel2_tb(void **dev_cache, int64_t *cach
 }
 
 template<bool FITS_SHMEM, int SHM_META, int SHM_WORK>
-__global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_index, 
+__global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_index,
     int64_t num_nodes, int64_t feature_len, int64_t compressed_len, float *output_features, int32_t *bitmask,
-    float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval, 
+    float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval,
     int32_t total_nodes, int num_ways, int32_t num_sets, int shmem_size,
     ull *misses, ull *lookups, ull *inserts) {
-    
+
     extern __shared__ int32_t shared_mem[];
     // 32 elements for metadata, 64 elements for working data
     // = 96 elements per warp
@@ -523,22 +523,22 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
 #endif
             if(bitmask[nodeId / 32] & (1 << (nodeId % 32))) {
                 ibp::decompress_fetch_cpu<FITS_SHMEM, SHM_META, SHM_WORK>(
-                    (int32_t*)&output_features[i * feature_len], 
-                    (int32_t*)&cpu_features[nodeId * feature_len], shm_mask, shm_bitval, 
+                    (int32_t*)&output_features[i * feature_len],
+                    (int32_t*)&cpu_features[nodeId * feature_len], shm_mask, shm_bitval,
                     feature_len, compressed_len, workspace, dev_mask, dev_bitval, shmem_size);
             } else {
-                memcpy_warp(&output_features[i * feature_len], 
+                memcpy_warp(&output_features[i * feature_len],
                     &cpu_features[nodeId * feature_len], feature_len);
             }
         } else {
             int64_t gpu_id, compressed;
             int64_t offset = deconstruct_hash_ptr(index, gpu_id, compressed);
             if(!compressed){
-                memcpy_warp(&output_features[i * feature_len], 
+                memcpy_warp(&output_features[i * feature_len],
                     (float*)&(((char*)dev_cache[gpu_id])[offset]), feature_len);
             } else {
-                decompress_and_write((int32_t*)&output_features[i * feature_len], 
-                    (int32_t*)&((char*)dev_cache[gpu_id])[offset], 
+                decompress_and_write((int32_t*)&output_features[i * feature_len],
+                    (int32_t*)&((char*)dev_cache[gpu_id])[offset],
                     full_mask, full_bitval, feature_len);
             }
         }
@@ -546,12 +546,12 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
 }
 
 template<bool FITS_SHMEM>
-__global__ void compress_transfer_kernel(void **dev_cache, int64_t *cache_index, 
-    int64_t num_nodes, int64_t feature_len, float *output_features, 
-    float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval, 
+__global__ void compress_transfer_kernel(void **dev_cache, int64_t *cache_index,
+    int64_t num_nodes, int64_t feature_len, float *output_features,
+    float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval,
     int32_t total_nodes, int num_ways, int32_t num_sets,
     ull *misses, ull *lookups, ull *inserts) {
-    
+
     extern __shared__ int32_t shared_mem[];
     // Move mask to shared memory if we have space. Otherwise use device memory
     int32_t *shm_mask = shared_mem, *shm_bitval = &shared_mem[feature_len];
@@ -586,22 +586,22 @@ __global__ void compress_transfer_kernel(void **dev_cache, int64_t *cache_index,
 #endif
             int32_t nodeId = node_arr[i];
             // If we have extra space on both sides, we can use optimized padded copy
-            memcpy_warp(&output_features[i * feature_len], 
+            memcpy_warp(&output_features[i * feature_len],
                             &cpu_features[nodeId * feature_len], feature_len);
         } else {
             int64_t gpu_id, compressed;
             int64_t offset = deconstruct_hash_ptr(index, gpu_id, compressed);
             if(!compressed){
-                //memcpy_warp(&output_features[i * feature_len], 
+                //memcpy_warp(&output_features[i * feature_len],
                 //            &cpu_features[nodeId * feature_len], feature_len);
-                memcpy_warp(&output_features[i * feature_len], 
+                memcpy_warp(&output_features[i * feature_len],
                     (float*)&(((char*)dev_cache[gpu_id])[offset]), feature_len);
             } else {
 
-//                memcpy_warp(&output_features[i * feature_len], 
+//                memcpy_warp(&output_features[i * feature_len],
 //                            &cpu_features[nodeId * feature_len], feature_len);
-                decompress_and_write((int32_t*)&output_features[i * feature_len], 
-                    (int32_t*)&((char*)dev_cache[gpu_id])[offset], 
+                decompress_and_write((int32_t*)&output_features[i * feature_len],
+                    (int32_t*)&((char*)dev_cache[gpu_id])[offset],
                     shm_mask, shm_bitval, feature_len);
             }
             /*__syncwarp();
@@ -609,8 +609,8 @@ __global__ void compress_transfer_kernel(void **dev_cache, int64_t *cache_index,
             for(int j = laneId; j < feature_len; j += DWARP_SIZE) {
                 if(output_features[i * feature_len + j] != cpu_features[nodeId * feature_len + j]) {
                     if(index == 0) {
-                        printf("%d: Mismatch node %d ind %lx %x %x\n", i, nodeId, index, 
-                            ((int32_t*)output_features)[i * feature_len + j], 
+                        printf("%d: Mismatch node %d ind %lx %x %x\n", i, nodeId, index,
+                            ((int32_t*)output_features)[i * feature_len + j],
                             ((int32_t*)cpu_features)[nodeId * feature_len + j]);
                     }
                     return;

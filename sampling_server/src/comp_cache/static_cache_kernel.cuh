@@ -3,17 +3,17 @@
 namespace cg = cooperative_groups;
 // Helper functions for hashing keys
 // TODO AKKAMATH: Add fancy hash algorithms
-__inline__ __device__ int64_t key_to_set_index(int64_t key, int64_t num_sets, int64_t num_gpus) 
+__inline__ __device__ int64_t key_to_set_index(int64_t key, int64_t num_sets, int64_t num_gpus)
 {
     return key % (num_sets / num_gpus);
 }
 
-__inline__ __device__ int64_t key_to_gpu_index(int64_t key, int64_t num_sets, int64_t num_gpus) 
+__inline__ __device__ int64_t key_to_gpu_index(int64_t key, int64_t num_sets, int64_t num_gpus)
 {
     return (key % num_sets) / (num_sets / num_gpus);
 }
 
-__inline__ __device__ int64_t offset_to_value(int64_t offset, int gpu_id, int64_t num_sets, int64_t num_ways) 
+__inline__ __device__ int64_t offset_to_value(int64_t offset, int gpu_id, int64_t num_sets, int64_t num_ways)
 {
     return gpu_id * num_sets * num_ways + offset;
 }
@@ -28,7 +28,7 @@ __inline__ __device__ int64_t value_to_gpu_index(int64_t value, int64_t num_sets
     return value / (num_sets * num_ways);
 }
 
-__global__ void static_reset_cache_metadata(int *cache_keys, ull *cache_val, int64_t nodes) 
+__global__ void static_reset_cache_metadata(int *cache_keys, ull *cache_val, int64_t nodes)
 {
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
     for(int i = threadId; i < nodes; i += blockDim.x * gridDim.x) {
@@ -90,15 +90,15 @@ __inline__ __device__ int static_insert_single_feature(
             if(empty_slot >= 0)
                 break;
         }
-        
+
     }
     return (empty_slot >= 0 ? index : -1);
 }
 
 // Bulk insert into cache
-__global__ void static_insert_features_kernel(void *cache, int **cache_key, 
-    ull **cache_val, int gpu_id, int num_gpus, int64_t num_nodes, int64_t feature_len, 
-    float *cpu_features, int32_t *index_array, int64_t total_nodes, 
+__global__ void static_insert_features_kernel(void *cache, int **cache_key,
+    ull **cache_val, int gpu_id, int num_gpus, int64_t num_nodes, int64_t feature_len,
+    float *cpu_features, int32_t *index_array, int64_t total_nodes,
     int num_ways, int32_t num_sets, int dyn_flags, int *failed_inserts = nullptr)
 {
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
@@ -109,13 +109,13 @@ __global__ void static_insert_features_kernel(void *cache, int **cache_key,
         __syncwarp();
         int64_t nodeId = index_array[i];
         // Otherwise just use aligned copies
-        memcpy_warp(((float *)cache + i * feature_len), 
+        memcpy_warp(((float *)cache + i * feature_len),
                     &cpu_features[nodeId * feature_len], feature_len);
         __syncwarp();
-        
+
         ull value = offset_to_value(i, gpu_id, num_sets, num_ways);
         // Attempt an insert. Check if there's enough space for padded read on both sides
-        int slot = static_insert_single_feature(cache_key, cache_val, nodeId, value, 
+        int slot = static_insert_single_feature(cache_key, cache_val, nodeId, value,
             num_gpus, num_ways, num_sets);
         // Increment fail counter if appropriate
         if(slot < 0 && failed_inserts != nullptr && laneId == 0) {
@@ -125,9 +125,9 @@ __global__ void static_insert_features_kernel(void *cache, int **cache_key,
 }
 
 // [TEST] Check if features properly copied into cache
-__global__ void static_test_lookup_features_kernel(void **dev_cache, int **dev_cache_key, 
-    ull **dev_cache_val, int64_t num_nodes, int64_t feature_len, void *cpu_features, 
-    int32_t *index_array, int num_gpus, int num_ways, int32_t num_sets, 
+__global__ void static_test_lookup_features_kernel(void **dev_cache, int **dev_cache_key,
+    ull **dev_cache_val, int64_t num_nodes, int64_t feature_len, void *cpu_features,
+    int32_t *index_array, int num_gpus, int num_ways, int32_t num_sets,
     int *success_lookups = nullptr, int *keys_found = nullptr)
 {
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
@@ -182,9 +182,9 @@ __global__ void static_test_lookup_features_kernel(void **dev_cache, int **dev_c
     }
 }
 
-__global__ void static_retrieve_kernel(int **dev_cache_key, ull **dev_cache_vals, 
+__global__ void static_retrieve_kernel(int **dev_cache_key, ull **dev_cache_vals,
     int64_t *cache_index, int64_t num_nodes, int32_t *node_arr, int num_gpus,
-    int num_ways, int32_t num_sets, int dyn_flags, 
+    int num_ways, int32_t num_sets, int dyn_flags,
     ull *misses = nullptr, ull *accesses = nullptr, ull *inserts = nullptr) {
     // Split into tiles
     unsigned threads_per_work = min(num_ways, DWARP_SIZE);
@@ -230,12 +230,12 @@ __global__ void static_retrieve_kernel(int **dev_cache_key, ull **dev_cache_vals
     }
 }
 
-__global__ void static_transfer_kernel(void **dev_cache, int **dev_cache_key, 
-    ull **dev_cache_vals, int64_t *cache_index, int64_t num_nodes, int64_t feature_len, 
-    float *output_features, float *cpu_features, int32_t *node_arr, int lru_counter, 
-    int num_gpus, int total_nodes, int num_ways, int32_t num_sets, int dyn_flags, 
+__global__ void static_transfer_kernel(void **dev_cache, int **dev_cache_key,
+    ull **dev_cache_vals, int64_t *cache_index, int64_t num_nodes, int64_t feature_len,
+    float *output_features, float *cpu_features, int32_t *node_arr, int lru_counter,
+    int num_gpus, int total_nodes, int num_ways, int32_t num_sets, int dyn_flags,
     ull *misses = nullptr, ull *accesses = nullptr, ull *inserts = nullptr) {
-    
+
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
     int warpId = threadId / DWARP_SIZE;
     int numWarps = (blockDim.x * gridDim.x) / DWARP_SIZE;
@@ -255,7 +255,7 @@ __global__ void static_transfer_kernel(void **dev_cache, int **dev_cache_key,
         // Not in cache, manual copy
         else if(index < 0) {
             // If we have extra space on both sides, we can use optimized padded copy
-            memcpy_warp(&output_features[i * feature_len], 
+            memcpy_warp(&output_features[i * feature_len],
                                 &cpu_features[nodeId * feature_len], feature_len);
         } else {
             int devId = value_to_gpu_index(index, num_sets, num_ways);
