@@ -1,5 +1,5 @@
-import os 
-import argparse 
+import os
+import argparse
 import subprocess
 import re
 import networkx as nx
@@ -35,7 +35,7 @@ def find_largest_fully_connected_group(G):
     max_size = max(len(clique) for clique in cliques) if cliques else 1
     max_cliques = [clique for clique in cliques if len(clique) == max_size]
     return max_size, max_cliques
-        
+
 def Run(args):
     import dataset_info as di
     path, vertices_num, edges_num, features_dim, train_set_num, valid_set_num, \
@@ -44,7 +44,7 @@ def Run(args):
         file.write("{} {} {} {} {} {} {} {} {} {} {}".format(path, args.train_batch_size, vertices_num, edges_num, features_dim, train_set_num, valid_set_num, test_set_num, args.cache_memory, args.epoch, feat_dataset_file))
 
     gpu_number = args.gpu_number
-    
+
     if args.usenvlink == 1:
         connections = get_nvlink_topology()
         G = nx.Graph()
