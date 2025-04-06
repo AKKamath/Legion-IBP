@@ -49,7 +49,7 @@ extract_%:
 	python scripts/extract_results.py ${RESULTS} $* "unopt dgl compdgl base mod comp cputest opt" > ${RESULTS}/$*.log
 
 extract_expts:
-	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt dgl dglcomp base mod comp cpuonly cputest opt"
+	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt dgl dglcomp base mod comp cpuonly cpuonlyasync cputest cpuasync opt"
 
 extract_expts_single:
 	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt_singlegpu dgl_singlegpu dglcomp_singlegpu base_singlegpu mod_singlegpu comp_singlegpu cpuonly_singlegpu cputest_singlegpu opt_singlegpu"
@@ -81,6 +81,8 @@ run_%_all:
 	$(MAKE) run_$*_base
 	$(MAKE) run_$*_comp
 	$(MAKE) run_$*_cputest
+	$(MAKE) run_$*_cpuasync
+	$(MAKE) run_$*_cpuonly
 	$(MAKE) run_$*_mod
 	$(MAKE) run_$*_opt
 	#$(MAKE) run_$*_unopt
@@ -111,8 +113,8 @@ run_cpuonly:
 %_comp:
 	$(MAKE) $* DYN_CACHE=8 POSTFIX=_comp${POSTFIX}
 
-%_compcpu:
-	$(MAKE) $* DYN_CACHE=24 POSTFIX=_compcpu${POSTFIX}
+#%_compcpu:
+#	$(MAKE) $* DYN_CACHE=24 POSTFIX=_compcpu${POSTFIX}
 
 %_base:
 	$(MAKE) $* DYN_CACHE=0 POSTFIX=_base${POSTFIX}
@@ -124,17 +126,23 @@ run_cpuonly:
 	$(MAKE) $* DYN_CACHE=64 POSTFIX=_unopt${POSTFIX}
 
 %_comptest:
-	$(MAKE) $* EXPT=sampling DYN_CACHE=128 POSTFIX=_comptest${POSTFIX} CACHE_SIZE=38000000 OTHER_OPTS="--usenvlink=0" NUM_GPUS=1 
+	$(MAKE) $* EXPT=sampling DYN_CACHE=128 POSTFIX=_comptest${POSTFIX} CACHE_SIZE=38000000 OTHER_OPTS="--usenvlink=0" NUM_GPUS=1
 
 %_cputest:
 	$(MAKE) $* DYN_CACHE=280 POSTFIX=_cputest${POSTFIX}
 
+%_cpuasync:
+	$(MAKE) $* DYN_CACHE=792 POSTFIX=_cpuasync${POSTFIX}
+
 %_cpuonly:
 	$(MAKE) $* DYN_CACHE=272 POSTFIX=_cpuonly${POSTFIX}
 
+%_cpuonlyasync:
+	$(MAKE) $* DYN_CACHE=784 POSTFIX=_cpuonlyasync${POSTFIX}
+
 %_dgl:
 	$(MAKE) $* EXPT=dgl_graphsage
- 
+
 %_dglcomp:
 	$(MAKE) $* EXPT=dgl_graphsage COMPRESS=1 POSTFIX=comp${POSTFIX}
 

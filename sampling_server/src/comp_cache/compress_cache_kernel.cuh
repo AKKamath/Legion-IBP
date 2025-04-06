@@ -471,7 +471,7 @@ __global__ void compress_cpu_transfer_kernel2_tb(void **dev_cache, int64_t *cach
     }
 }
 
-template<bool FITS_SHMEM, int SHM_META, int SHM_WORK>
+template<bool FITS_SHMEM, int SHM_META, int SHM_WORK, bool ASYNC>
 __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_index,
     int64_t num_nodes, int64_t feature_len, int64_t compressed_len, float *output_features, int32_t *bitmask,
     float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval,
@@ -484,10 +484,17 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
     int32_t *workspace = &shared_mem[(threadIdx.x / DWARP_SIZE) * 96];
     // Retain shmem_size as the number of elements in shmem thingies
     shmem_size -= (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * 96 * sizeof(int32_t);
+    size_t offset = (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * 96;
+    int32_t *async_bitmask;
+    if constexpr(ASYNC) {
+        async_bitmask = &shared_mem[offset + threadIdx.x / DWARP_SIZE];
+        offset += (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE;
+        shmem_size -= (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * sizeof(int32_t);
+    }
     // Convert bytes to elements per shm_mask/shm_bitval array
     shmem_size /= sizeof(int32_t) * 2;
-    int32_t *shm_mask = &shared_mem[(blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * 96];
-    int32_t *shm_bitval = &shared_mem[(blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * 96 + shmem_size];
+    int32_t *shm_mask = &shared_mem[offset];
+    int32_t *shm_bitval = &shared_mem[offset + shmem_size];
     for(int i = threadIdx.x; i < shmem_size; i += blockDim.x) {
         shm_mask[i] = dev_mask[i];
         shm_bitval[i] = dev_bitval[i];
@@ -505,6 +512,7 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
     int threadId = threadIdx.x + blockIdx.x * blockDim.x;
     int warpId = threadId / DWARP_SIZE;
     int numWarps = (blockDim.x * gridDim.x) / DWARP_SIZE;
+    int read_bitmask = -1;
     // Go through node list
     for(int i = warpId; i < num_nodes; i += numWarps) {
         __syncwarp();
@@ -521,20 +529,39 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
             if(laneId == 0)
                 atomicAdd(misses, 1);
 #endif
-            if(bitmask[nodeId / 32] & (1 << (nodeId % 32))) {
-                ibp::decompress_fetch_cpu<FITS_SHMEM, SHM_META, SHM_WORK>(
+            if constexpr(ASYNC) {
+                async_commit();
+                async_waitall();
+                __syncwarp();
+                // First iteration, must read directly
+                if(read_bitmask == -1)
+                    read_bitmask = bitmask[nodeId / 32];
+                else
+                    read_bitmask = *async_bitmask;
+                __syncwarp();
+                // TODO: CHECK IF index < 0 as well, otherwise we'll be reading out of cache next iteration.
+                if(i + numWarps < num_nodes && cache_index[i + numWarps] < 0 && threadIdx.x % DWARP_SIZE == 0) {
+                    int64_t new_index = node_arr[i + numWarps];
+                    async_cp(async_bitmask, &bitmask[new_index / 32], 1);
+                }
+            } else {
+                read_bitmask = bitmask[nodeId / 32];
+            }
+            if(read_bitmask & (1 << (nodeId % 32))) {
+                ibp::decompress_fetch_cpu<FITS_SHMEM, SHM_META, SHM_WORK, ASYNC>(
                     (int32_t*)&output_features[i * feature_len],
                     (int32_t*)&cpu_features[nodeId * feature_len], shm_mask, shm_bitval,
                     feature_len, compressed_len, workspace, dev_mask, dev_bitval, shmem_size);
             } else {
-                memcpy_warp(&output_features[i * feature_len],
+                memcpy_warp<false>(&output_features[i * feature_len],
                     &cpu_features[nodeId * feature_len], feature_len);
             }
         } else {
+            read_bitmask = -1;
             int64_t gpu_id, compressed;
             int64_t offset = deconstruct_hash_ptr(index, gpu_id, compressed);
             if(!compressed){
-                memcpy_warp(&output_features[i * feature_len],
+                memcpy_warp<false>(&output_features[i * feature_len],
                     (float*)&(((char*)dev_cache[gpu_id])[offset]), feature_len);
             } else {
                 decompress_and_write((int32_t*)&output_features[i * feature_len],
@@ -545,7 +572,7 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
     }
 }
 
-template<bool FITS_SHMEM>
+template<bool FITS_SHMEM, int ASYNC_SIZE = 0>
 __global__ void compress_transfer_kernel(void **dev_cache, int64_t *cache_index,
     int64_t num_nodes, int64_t feature_len, float *output_features,
     float *cpu_features, int32_t *node_arr, int32_t *dev_mask, int32_t *dev_bitval,
@@ -554,7 +581,17 @@ __global__ void compress_transfer_kernel(void **dev_cache, int64_t *cache_index,
 
     extern __shared__ int32_t shared_mem[];
     // Move mask to shared memory if we have space. Otherwise use device memory
-    int32_t *shm_mask = shared_mem, *shm_bitval = &shared_mem[feature_len];
+    int32_t *shm_mask, *shm_bitval;
+    float *workspace;
+    if constexpr(ASYNC_SIZE > 0) {
+        workspace = (float*)&shared_mem[threadIdx.x / DWARP_SIZE * ASYNC_SIZE / sizeof(int32_t)];
+        size_t offset = (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * ASYNC_SIZE / sizeof(int32_t);
+        shm_mask = &shared_mem[offset];
+        shm_bitval = &shared_mem[offset + feature_len];
+    } else {
+        shm_mask = shared_mem;
+        shm_bitval = &shared_mem[feature_len];
+    }
     if constexpr(FITS_SHMEM) {
         for(int i = threadIdx.x; i < feature_len; i += blockDim.x) {
             shm_mask[i] = dev_mask[i];
@@ -585,17 +622,43 @@ __global__ void compress_transfer_kernel(void **dev_cache, int64_t *cache_index,
                 atomicAdd(misses, 1);
 #endif
             int32_t nodeId = node_arr[i];
-            // If we have extra space on both sides, we can use optimized padded copy
-            memcpy_warp(&output_features[i * feature_len],
-                            &cpu_features[nodeId * feature_len], feature_len);
+            if constexpr(ASYNC_SIZE > 0) {
+                int laneId = threadIdx.x % DWARP_SIZE;
+                for(size_t cur_off = 0; cur_off < feature_len;) {
+                    size_t cur_len = min(feature_len - cur_off, ASYNC_SIZE / sizeof(float));
+                    memcpy_warp<true>(workspace, &cpu_features[nodeId * feature_len + cur_off], cur_len);
+                    async_waitall();
+                    for(int j = laneId; j < cur_len; j += DWARP_SIZE) {
+                        output_features[i * feature_len + cur_off + j] = workspace[j];
+                    }
+                    cur_off += cur_len;
+                }
+            } else {
+                // If we have extra space on both sides, we can use optimized padded copy
+                memcpy_warp(&output_features[i * feature_len],
+                                &cpu_features[nodeId * feature_len], feature_len);
+            }
         } else {
             int64_t gpu_id, compressed;
             int64_t offset = deconstruct_hash_ptr(index, gpu_id, compressed);
             if(!compressed){
                 //memcpy_warp(&output_features[i * feature_len],
                 //            &cpu_features[nodeId * feature_len], feature_len);
-                memcpy_warp(&output_features[i * feature_len],
-                    (float*)&(((char*)dev_cache[gpu_id])[offset]), feature_len);
+                if constexpr(ASYNC_SIZE > 0) {
+                    int laneId = threadIdx.x % DWARP_SIZE;
+                    for(size_t cur_off = 0; cur_off < feature_len;) {
+                        size_t cur_len = min(feature_len - cur_off, ASYNC_SIZE / sizeof(float));
+                        memcpy_warp<true>(workspace, &(((float*)&(((char*)dev_cache[gpu_id])[offset]))[cur_off]), cur_len);
+                        async_waitall();
+                        for(int j = laneId; j < cur_len; j += DWARP_SIZE) {
+                            output_features[i * feature_len + cur_off + j] = workspace[j];
+                        }
+                        cur_off += cur_len;
+                    }
+                } else {
+                    memcpy_warp(&output_features[i * feature_len],
+                        (float*)&(((char*)dev_cache[gpu_id])[offset]), feature_len);
+                }
             } else {
 
 //                memcpy_warp(&output_features[i * feature_len],

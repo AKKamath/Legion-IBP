@@ -435,18 +435,25 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     free(host_cache_offset_ptr);
     free(host_cache_key_ptr);
     if(flags & DYN_COMP_CPU) {
+//#define TEST_CPU_COMPRESS
+#ifdef TEST_CPU_COMPRESS
+        int32_t *decomp_cpu_vals;
+        cudaMallocHost(&decomp_cpu_vals, total_nodes * feature_len * sizeof(int32_t));
+        memcpy(decomp_cpu_vals, cpu_features, total_nodes * feature_len * sizeof(int32_t));
+#endif
         cudaMalloc(&comp_bitmask, (total_nodes + 31) / 32 * sizeof(int32_t));
         cudaCheckError();
         ibp::compress_inplace((int32_t*)cpu_features,
             (int32_t*)cpu_features, total_nodes, feature_len,
             comp_mask, comp_bitval, comp_bitmask);
         cudaCheckError();
-        /*
+
+#ifdef TEST_CPU_COMPRESS
         // Test if compressed CPU features match when decompressed.
         int32_t *decomp;
         cudaMallocHost(&decomp, total_nodes * feature_len * sizeof(int32_t));
         decompressed_cpu_features_kernel<<<32, 512>>>(comp_mask, comp_bitval, (int32_t*)cpu_features,
-            decomp, total_nodes, feature_len, working_space, comp_bitmask);
+            decomp, total_nodes, feature_len, comp_bitmask);
         cudaDeviceSynchronize();
         int match = true;
         int i = 0;
@@ -466,7 +473,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         printf("Match? %d\n", match);
         fflush(stdout);
         abort();
-        */
+#endif
         cudaDeviceSynchronize();
         cudaCheckError();
     }
@@ -568,20 +575,21 @@ void StaticCache::insert_features_compressed(int64_t &nodes_per_gpu, float *inpu
     float *output_feats, *h_output_feats;
     int64_t *node_index;
     int *h_index_arr;
-    cudaMalloc(&output_feats, 2*inserted_feats * feature_len * sizeof(float));
-    cudaMallocHost(&h_output_feats, 2*inserted_feats * feature_len * sizeof(float));
-    cudaMalloc(&node_index, 2*inserted_feats * sizeof(int64_t));
+    const size_t INSERTED_FEATS = 2 * inserted_feats;
+    cudaMalloc(&output_feats,INSERTED_FEATS  * feature_len * sizeof(float));
+    cudaMallocHost(&h_output_feats, INSERTED_FEATS * feature_len * sizeof(float));
+    cudaMalloc(&node_index, INSERTED_FEATS * sizeof(int64_t));
     cudaCheckError();
-    retrieve(index_array, 2*inserted_feats, node_index, 0);
-    transfer(index_array, 2*inserted_feats, output_feats, node_index, input_feats, total_nodes, 0);
+    retrieve(index_array, INSERTED_FEATS, node_index, 0);
+    transfer(index_array, INSERTED_FEATS, output_feats, node_index, input_feats, total_nodes, 0);
     cudaCheckError();
-    cudaMemcpy(h_output_feats, output_feats, 2*inserted_feats * feature_len * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMallocHost(&h_index_arr, 2*inserted_feats * sizeof(int));
-    cudaMemcpy(h_index_arr, index_array, 2*inserted_feats * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_output_feats, output_feats, INSERTED_FEATS * feature_len * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMallocHost(&h_index_arr, INSERTED_FEATS * sizeof(int));
+    cudaMemcpy(h_index_arr, index_array, INSERTED_FEATS * sizeof(int), cudaMemcpyDeviceToHost);
     cudaCheckError();
     int match = true;
     int i = 0;
-    for(int j = 0; j < 2*inserted_feats; ++j)
+    for(int j = 0; j < INSERTED_FEATS; ++j)
         for(i = 0; i < feature_len; ++i) {
             if(input_feats[h_index_arr[j] * feature_len + i] != h_output_feats[j * feature_len + i]) {
                 printf("Mishmatch at %d (%d). Expected %x, got %x\n", i,
@@ -606,15 +614,17 @@ void StaticCache::test_lookup_features(int64_t num_nodes, float *input_feats,
             dev_cache_offset, num_nodes, feature_len, input_feats, index_array,
             num_gpus, num_ways, num_sets, success_lookups, keys_found);
     else {
+        int num_blocks = 32;
+        int num_threads = 256;
         auto kernel = &compressed_test_lookup_features_kernel<true>;
         int shmem_size;
         // TODO: Do this by the executing GPU. Relevant for heterogeneous GPU machines
-        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + sizeof(int32_t) * 512) {
-            shmem_size = 2 * feature_len * sizeof(int32_t) + sizeof(int32_t) * 512;
+        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + sizeof(int32_t) * num_threads) {
+            shmem_size = 2 * feature_len * sizeof(int32_t) + sizeof(int32_t) * num_threads;
             kernel = &compressed_test_lookup_features_kernel<true>;
         }
         else {
-            shmem_size = sizeof(int32_t) * 512;
+            shmem_size = sizeof(int32_t) * num_threads;
             kernel = &compressed_test_lookup_features_kernel<false>;
         }
         // Need opt-in for large shmem allocations
@@ -622,7 +632,7 @@ void StaticCache::test_lookup_features(int64_t num_nodes, float *input_feats,
             cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
             cudaCheckError();
         }
-        kernel<<<32, 512, shmem_size>>>
+        kernel<<<num_blocks, num_threads, shmem_size>>>
             (dev_cache_storage, dev_cache_key, dev_cache_offset, comp_mask, comp_bitval,
             num_nodes, feature_len, input_feats, index_array, num_gpus, num_ways, num_sets,
             success_lookups, keys_found, 4);
@@ -653,22 +663,31 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
     if(flags & DYN_CPU_TEST2) {
         constexpr int SHM_META = 128;
         constexpr int SHM_WORK = 256;
-        auto kernel = &compress_cpu_transfer_kernel2<true, SHM_META, SHM_WORK>;
+        auto kernel = &compress_cpu_transfer_kernel2<true, SHM_META, SHM_WORK, false>;
         // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
-        if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t) + NTHREADS / DWARP_SIZE * 96 * sizeof(int32_t)) {
-            shmem_size = 2 * feature_len * sizeof(int32_t) + NTHREADS / DWARP_SIZE * 96 * sizeof(int32_t);
-            kernel = &compress_cpu_transfer_kernel2<true, SHM_META, SHM_WORK>;
+        size_t shmem_size = 2 * feature_len * sizeof(int32_t) + NTHREADS / DWARP_SIZE * 96 * sizeof(int32_t);
+        if (flags & DYN_ASYNC)
+            shmem_size += NTHREADS / DWARP_SIZE * sizeof(int32_t);
+        if(maxShmem[0] >= shmem_size) {
+            if(flags & DYN_ASYNC)
+                kernel = &compress_cpu_transfer_kernel2<true, SHM_META, SHM_WORK, true>;
+            else
+                kernel = &compress_cpu_transfer_kernel2<true, SHM_META, SHM_WORK, false>;
         }
         else {
             shmem_size = NTHREADS / DWARP_SIZE * 96 * sizeof(int32_t);
-            kernel = &compress_cpu_transfer_kernel2<false, SHM_META, SHM_WORK>;
+            if (flags & DYN_ASYNC) {
+                shmem_size += NTHREADS / DWARP_SIZE * sizeof(int32_t);
+                kernel = &compress_cpu_transfer_kernel2<false, SHM_META, SHM_WORK, true>;
+            } else {
+                kernel = &compress_cpu_transfer_kernel2<false, SHM_META, SHM_WORK, false>;
+            }
         }
         // Need opt-in for large shmem allocations
         if (shmem_size >= 48 * 1024) {
             cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem_size);
             cudaCheckError();
         }
-
         kernel<<<NBLOCKS, NTHREADS, shmem_size, stream>>>(dev_cache_storage,
             node_index, num_nodes, feature_len, compress_len, output_buffer, comp_bitmask, input_feats,
             nodeIds, comp_mask, comp_bitval, total_nodes, num_ways, num_sets, shmem_size,
@@ -699,14 +718,27 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
         else if(flags & DYN_COMP) {
             auto kernel = &compress_transfer_kernel<true>;
 
-            // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
-            if(maxShmem[0] >= 2 * feature_len * sizeof(int32_t)) {
-                shmem_size = 2 * feature_len * sizeof(int32_t);
-                kernel = &compress_transfer_kernel<true>;
+            size_t shmem_size = 2 * feature_len * sizeof(int32_t);
+            constexpr int SHM_WORKSPACE = 512;
+            if (flags & DYN_ASYNC) {
+                shmem_size += SHM_WORKSPACE;
             }
-            else {
-                shmem_size = 0;
-                kernel = &compress_transfer_kernel<false>;
+
+            // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
+            if(maxShmem[0] >= shmem_size) {
+                if (flags & DYN_ASYNC) {
+                    kernel = &compress_transfer_kernel<true, SHM_WORKSPACE>;
+                } else {
+                    kernel = &compress_transfer_kernel<true, 0>;
+                }
+            } else {
+                if (flags & DYN_ASYNC) {
+                    shmem_size = SHM_WORKSPACE;
+                    kernel = &compress_transfer_kernel<false, SHM_WORKSPACE>;
+                } else {
+                    shmem_size = 0;
+                    kernel = &compress_transfer_kernel<false, 0>;
+                }
             }
 
             // Need opt-in for large shmem allocations
@@ -725,5 +757,4 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
                 feature_len, output_buffer, input_feats, nodeIds, 0, num_gpus, total_nodes,
                 num_ways, num_sets, flags, misses, lookups, inserts);
     }
-
 }

@@ -41,6 +41,7 @@ enum DYN_FLAGS : int {
   DYN_UNOPT    = (1<<6),
   DYN_COMP_TEST= (1<<7),
   DYN_CPU_TEST2= (1<<8),
+  DYN_ASYNC    = (1<<9),
 };
 
 typedef int LRU;
