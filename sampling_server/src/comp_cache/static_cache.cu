@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <iostream>
 #include <thrust/sequence.h>
+#include <thrust/scan.h>
+#include <thrust/execution_policy.h>
 #include "misc/compress_test.cuh"
 #include "misc/ibp_misc_kernels.cuh"
 #include "preproc/ibp_preproc_host.cuh"
@@ -721,7 +723,7 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
             size_t shmem_size = 2 * feature_len * sizeof(int32_t);
             constexpr int SHM_WORKSPACE = 512;
             if (flags & DYN_ASYNC) {
-                shmem_size += SHM_WORKSPACE;
+                shmem_size += SHM_WORKSPACE * NTHREADS / DWARP_SIZE;
             }
 
             // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
@@ -733,7 +735,7 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
                 }
             } else {
                 if (flags & DYN_ASYNC) {
-                    shmem_size = SHM_WORKSPACE;
+                    shmem_size = SHM_WORKSPACE * NTHREADS / DWARP_SIZE;
                     kernel = &compress_transfer_kernel<false, SHM_WORKSPACE>;
                 } else {
                     shmem_size = 0;

@@ -113,6 +113,9 @@ run_cpuonly:
 %_comp:
 	$(MAKE) $* DYN_CACHE=8 POSTFIX=_comp${POSTFIX}
 
+%_asynccomp:
+	$(MAKE) $* DYN_CACHE=520 POSTFIX=_asynccomp${POSTFIX}
+
 #%_compcpu:
 #	$(MAKE) $* DYN_CACHE=24 POSTFIX=_compcpu${POSTFIX}
 
