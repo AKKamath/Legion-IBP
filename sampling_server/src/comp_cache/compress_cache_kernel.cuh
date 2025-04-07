@@ -479,17 +479,26 @@ __global__ void compress_cpu_transfer_kernel2(void **dev_cache, int64_t *cache_i
     ull *misses, ull *lookups, ull *inserts) {
 
     extern __shared__ int32_t shared_mem[];
+    constexpr size_t META_SIZE = (SHM_META + SHM_WORK) / sizeof(int32_t);
     // 32 elements for metadata, 64 elements for working data
     // = 96 elements per warp
-    int32_t *workspace = &shared_mem[(threadIdx.x / DWARP_SIZE) * 96];
-    // Retain shmem_size as the number of elements in shmem thingies
-    shmem_size -= (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * 96 * sizeof(int32_t);
-    size_t offset = (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * 96;
+    int32_t *workspace;
+    size_t offset = 0;
     int32_t *async_bitmask;
+
     if constexpr(ASYNC) {
+        workspace = (int32_t*)&shared_mem[(threadIdx.x / DWARP_SIZE) * (SHM_META + 2 * SHM_WORK) / sizeof(int32_t)];
+        shmem_size -= (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * (SHM_META + 2 * SHM_WORK);
+        offset = (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * (SHM_META + 2 * SHM_WORK) / sizeof(int32_t);
+
         async_bitmask = &shared_mem[offset + threadIdx.x / DWARP_SIZE];
-        offset += (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE;
         shmem_size -= (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * sizeof(int32_t);
+        offset += (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE;
+    } else {
+        workspace = &shared_mem[(threadIdx.x / DWARP_SIZE) * META_SIZE];
+        // Retain shmem_size as the number of elements in shmem thingies
+        shmem_size -= (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * META_SIZE * sizeof(int32_t);
+        offset = (blockDim.x + DWARP_SIZE - 1) / DWARP_SIZE * META_SIZE;
     }
     // Convert bytes to elements per shm_mask/shm_bitval array
     shmem_size /= sizeof(int32_t) * 2;

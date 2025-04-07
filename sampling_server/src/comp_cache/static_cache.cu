@@ -659,17 +659,23 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
     cudaGetDevice(&device);
     cudaDeviceGetAttribute (&major_version, cudaDevAttrComputeCapabilityMajor, device);
 
-    const int NTHREADS = 512;
+    constexpr int NTHREADS = 512;
     const int NBLOCKS = major_version == 8 ? 64 : 32;
     int shmem_size;
     if(flags & DYN_CPU_TEST2) {
         constexpr int SHM_META = 128;
         constexpr int SHM_WORK = 256;
         auto kernel = &compress_cpu_transfer_kernel2<true, SHM_META, SHM_WORK, false>;
+
+        const size_t SHM_FEAT = 2 * feature_len * sizeof(int32_t);
+        constexpr size_t SHM_WORKSPACE =  NTHREADS / DWARP_SIZE * (SHM_META + SHM_WORK);
+        constexpr size_t SHM_ASYNC = NTHREADS / DWARP_SIZE * sizeof(int32_t);
+
         // TODO: Change maxShmem based on executing GPU. Relevant for heterogeneous GPU machines
-        size_t shmem_size = 2 * feature_len * sizeof(int32_t) + NTHREADS / DWARP_SIZE * 96 * sizeof(int32_t);
+        size_t shmem_size = SHM_FEAT + SHM_WORKSPACE;
+        // Double the workspace for async
         if (flags & DYN_ASYNC)
-            shmem_size += NTHREADS / DWARP_SIZE * sizeof(int32_t);
+            shmem_size += SHM_ASYNC + NTHREADS / DWARP_SIZE * SHM_WORK;
         if(maxShmem[0] >= shmem_size) {
             if(flags & DYN_ASYNC)
                 kernel = &compress_cpu_transfer_kernel2<true, SHM_META, SHM_WORK, true>;
@@ -677,9 +683,9 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
                 kernel = &compress_cpu_transfer_kernel2<true, SHM_META, SHM_WORK, false>;
         }
         else {
-            shmem_size = NTHREADS / DWARP_SIZE * 96 * sizeof(int32_t);
+            shmem_size = SHM_WORKSPACE;
             if (flags & DYN_ASYNC) {
-                shmem_size += NTHREADS / DWARP_SIZE * sizeof(int32_t);
+                shmem_size += SHM_ASYNC + NTHREADS / DWARP_SIZE * SHM_WORK;
                 kernel = &compress_cpu_transfer_kernel2<false, SHM_META, SHM_WORK, true>;
             } else {
                 kernel = &compress_cpu_transfer_kernel2<false, SHM_META, SHM_WORK, false>;
