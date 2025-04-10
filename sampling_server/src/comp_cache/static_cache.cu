@@ -300,7 +300,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         decomp_start = TIME_NOW;
         ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer,
             nodes_per_gpu, (int64_t)feature_len, comp_mask, comp_bitval, comp_bitmask,
-            (int)(((float)comp_size / (float)in_bytes) * feature_len), stream, sm_count, 512);
+            (int)(((float)comp_size / (float)in_bytes) * feature_len), stream, sm_count, 512, 0);
         cudaDeviceSynchronize();
         cudaCheckError();
         decomp_end = TIME_NOW;
@@ -322,7 +322,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         decomp_start = TIME_NOW;
         ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer,
             nodes_per_gpu, (int64_t)feature_len, comp_mask, comp_bitval, comp_bitmask,
-            (int)(((float)comp_size / (float)in_bytes) * feature_len), stream, sm_count * 4, 512, 1);
+            (int)(((float)comp_size / (float)in_bytes) * feature_len), stream, sm_count, 512, 1);
         cudaDeviceSynchronize();
         cudaCheckError();
         decomp_end = TIME_NOW;
@@ -344,13 +344,13 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         decomp_start = TIME_NOW;
         ibp::decompress_fetch<int32_t>((int32_t*)device_output_data, (int32_t*)compressed_buffer,
             nodes_per_gpu, (int64_t)feature_len, comp_mask, comp_bitval, comp_bitmask,
-            (int)(((float)comp_size / (float)in_bytes) * feature_len), stream, sm_count * 4, 512, -1);
+            (int)(((float)comp_size / (float)in_bytes) * feature_len), stream, sm_count, 512, 5);
         cudaDeviceSynchronize();
         cudaCheckError();
         decomp_end = TIME_NOW;
         cudaMemcpy(host_output_data, device_output_data, in_bytes, cudaMemcpyDeviceToHost);
 
-        printf("%s: Time taken to decompress: %f ms. Throughput: %f MB/s; True thput: %f MB/s\n", "Us-Auto",
+        printf("%s: Time taken to decompress: %f ms. Throughput: %f MB/s; True thput: %f MB/s\n", "Us-Async",
             (float)TIME_DIFF(decomp_start, decomp_end) / 1000.0,
             (float)in_bytes / TIME_DIFF(decomp_start, decomp_end),
             (float)comp_size / TIME_DIFF(decomp_start, decomp_end));
@@ -660,7 +660,7 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
     cudaDeviceGetAttribute (&major_version, cudaDevAttrComputeCapabilityMajor, device);
 
     constexpr int NTHREADS = 512;
-    const int NBLOCKS = major_version == 8 ? 64 : 32;
+    constexpr int NBLOCKS = 32;//major_version == 8 ? 64 : 32;
     int shmem_size;
     if(flags & DYN_CPU_TEST2) {
         constexpr int SHM_META = 128;
