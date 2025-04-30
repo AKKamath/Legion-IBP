@@ -18,3 +18,5 @@ dataset/citeseer
 **/*.log
 **/*.png
 meta_config
+**.out
+**.err

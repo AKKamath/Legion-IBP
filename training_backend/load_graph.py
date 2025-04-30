@@ -4,7 +4,6 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/../")
 import dataset_info as di
 import numpy as np
 import torch
-import dgl
 
 def pin_inplace(tensor):
     try:
@@ -15,7 +14,7 @@ def pin_inplace(tensor):
         print(f"Failed to pin tensor: {e}")
     return tensor
 
-def load(dataset_path, dataset_name):
+def load(dataset_path, dataset_name, use_dgl = True):
     print(f"Opening dataset {dataset_name} at {dataset_path}")
     path, vertices_num, edges_num, features_dim, train_set_num, valid_set_num, \
         test_set_num, feat_dataset_file = di.get(dataset_path, dataset_name)
@@ -40,7 +39,7 @@ def load(dataset_path, dataset_name):
     )
     csr_dst_ids = torch.from_numpy(csr_dst_ids).share_memory_()
     csr_dst_ids = csr_dst_ids.type(torch.int64)
-    
+
     training_path = path  + "trainingset"
     validation_path = path  + "validationset"
     testing_path = path  + "testingset"
@@ -66,7 +65,7 @@ def load(dataset_path, dataset_name):
     validation_ids = validation_ids.type(torch.int64).share_memory_()
     testing_ids = torch.from_numpy(testing_ids)
     testing_ids = testing_ids.type(torch.int64).share_memory_()
-    
+
     print("Loaded all here")
     if feat_dataset_file != "":
         labels_path = feat_dataset_file + "labels"
@@ -112,11 +111,15 @@ def load(dataset_path, dataset_name):
     # Reshape and pin features
     features = pin_inplace(features.reshape((vertices_num, features_dim)))
     print(f"Features shared? {features.is_shared()}; pinned? {features.is_pinned()}")
-    g = dgl.graph(('csr', (csr_node_index, csr_dst_ids, [])))
-    # Reverse graph as DGL uses "in" edges for sampling, while Legion uses "out"
-    g = dgl.reverse(g, copy_edata=False, copy_ndata=False)
-    g.ndata["feat"] = features
-    g.ndata["label"] = labels
+    if use_dgl:
+        import dgl
+        g = dgl.graph(('csr', (csr_node_index, csr_dst_ids, [])))
+        # Reverse graph as DGL uses "in" edges for sampling, while Legion uses "out"
+        g = dgl.reverse(g, copy_edata=False, copy_ndata=False)
+        g.ndata["feat"] = features
+        g.ndata["label"] = labels
+    else:
+        g = None
     print("Setup graph")
     return g, features, labels, training_ids, validation_ids, testing_ids
     exit()
