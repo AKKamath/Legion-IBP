@@ -59,7 +59,7 @@ private:
     int64_t cache_capacity;
     int32_t num_sets;
     int32_t num_ways;
-    DYN_FLAGS flags;
+    int flags;
     int32_t *comp_mask;
     int32_t *comp_bitval;
     int32_t *comp_bitmask;
