@@ -454,9 +454,13 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         // Test if compressed CPU features match when decompressed.
         int32_t *decomp;
         cudaMallocHost(&decomp, total_nodes * feature_len * sizeof(int32_t));
+        //transfer(nullptr, total_nodes, (float*)decomp, nullptr, cpu_features, total_nodes, cudaStream_t(),
+        //    nullptr, nullptr, nullptr);
+
         decompressed_cpu_features_kernel<<<32, 512>>>(comp_mask, comp_bitval, (int32_t*)cpu_features,
             decomp, total_nodes, feature_len, comp_bitmask);
         cudaDeviceSynchronize();
+        cudaCheckError();
         int match = true;
         int i = 0;
         for(int j = 0; j < total_nodes; ++j) {
@@ -660,7 +664,7 @@ void StaticCache::transfer(int32_t *nodeIds, int64_t num_nodes, float *output_bu
     cudaDeviceGetAttribute (&major_version, cudaDevAttrComputeCapabilityMajor, device);
 
     constexpr int NTHREADS = 512;
-    constexpr int NBLOCKS = 32;//major_version == 8 ? 64 : 32;
+    int NBLOCKS = major_version == 8 ? 64 : 32;
     int shmem_size;
     if(flags & DYN_CPU_TEST2) {
         constexpr int SHM_META = 128;
