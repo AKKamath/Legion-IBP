@@ -35,7 +35,7 @@ graphsage:
 	$(MAKE) sampling & \
 	bash ./scripts/wait_file.sh ${RESULTS}/${DATASET}/sampling${POSTFIX}.log;
 
-	CUDA_VISIBLE_DEVICES=0,1 stdbuf -oL python training_backend/legion_graphsage.py --class_num ${CLASS_NUM} \
+	stdbuf -oL python training_backend/legion_graphsage.py --class_num ${CLASS_NUM} \
 		--features_num ${FEAT_NUM} --hidden_dim 256 --hops_num 2 --gpu_number ${NUM_GPUS} --float16 ${FP16} \
 		--epoch ${EPOCHS} > ${RESULTS}/${DATASET}/training${POSTFIX}.log
 
@@ -52,7 +52,7 @@ extract_expts:
 	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt dgl dglcomp base mod comp cpuonly cpuonlyasync cputest cpuasync opt"
 
 extract_expts_single:
-	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt_singlegpu dgl_singlegpu dglcomp_singlegpu base_singlegpu mod_singlegpu comp_singlegpu cpuonly_singlegpu cputest_singlegpu opt_singlegpu"
+	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt_singlegpu dgl_singlegpu dglcomp_singlegpu base_singlegpu mod_singlegpu comp_singlegpu cpuonly_singlegpu cputest_singlegpu cpuasync_singlegpu opt_singlegpu"
 
 extract_comptest:
 	python scripts/extract_compression.py ${RESULTS} "pubmed citeseer cora reddit products mag paper100m"
@@ -62,7 +62,7 @@ run_expts:
 	$(MAKE) run_products_all
 	$(MAKE) run_pubmed_ls_all
 	$(MAKE) run_citeseer_ls_all
-	$(MAKE) run_paper100m_all
+	#$(MAKE) run_paper100m_all
 	$(MAKE) run_cora_ls_all
 	$(MAKE) run_mag_all
 
@@ -88,14 +88,14 @@ run_%_all:
 	#$(MAKE) run_$*_unopt
 	$(MAKE) extract_$*
 
-run_cpuonly:
-	$(MAKE) run_reddit_cpuonly
-	$(MAKE) run_products_cpuonly
-	$(MAKE) run_cora_ls_cpuonly
-	$(MAKE) run_pubmed_ls_cpuonly
-	$(MAKE) run_citeseer_ls_cpuonly
-	$(MAKE) run_paper100m_cpuonly
-	$(MAKE) run_mag_cpuonly
+run_cpuasync_singlegpu:
+	$(MAKE) run_reddit_cpuasync_singlegpu
+	$(MAKE) run_products_cpuasync_singlegpu
+	$(MAKE) run_cora_ls_cpuasync_singlegpu
+	$(MAKE) run_pubmed_ls_cpuasync_singlegpu
+	$(MAKE) run_citeseer_ls_cpuasync_singlegpu
+	$(MAKE) run_paper100m_cpuasync_singlegpu
+	$(MAKE) run_mag_cpuasync_singlegpu
 
 
 # Command to run with dynamic cache

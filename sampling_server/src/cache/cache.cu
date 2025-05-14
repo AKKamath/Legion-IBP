@@ -76,7 +76,7 @@ public:
         cudaSetDevice(device_idx_);
         node_capacity_ = node_capacity;
         edge_capacity_ = edge_capacity;
-        
+
         auto invalid_key = CACHEMISS_FLAG;
         auto invalid_value = CACHEMISS_FLAG;
         if(!dyn_cache)
@@ -179,28 +179,28 @@ public:
         //     cudaMemcpy(h_global_count_, d_global_count_, 4, cudaMemcpyDeviceToHost);
         //     h_cache_hit_ += h_global_count_[0];
         //     if(op_id == 8){
-        //         std::cout<<device_idx_<<" Feature Cache Hit: "<<(h_cache_hit_ * 1.0 / h_node_counter[INTRABATCH_CON * 2 + 1])<<std::endl;    
+        //         std::cout<<device_idx_<<" Feature Cache Hit: "<<(h_cache_hit_ * 1.0 / h_node_counter[INTRABATCH_CON * 2 + 1])<<std::endl;
         //         h_cache_hit_ = 0;
         //     }
         // }
         if(op_id == 8){
-            // std::cout<<device_idx_<<" Feature Cache Hit: "<<h_cache_hit_<<" "<<(h_cache_hit_ * 1.0 / h_node_counter[9])<<std::endl;    
+            // std::cout<<device_idx_<<" Feature Cache Hit: "<<h_cache_hit_<<" "<<(h_cache_hit_ * 1.0 / h_node_counter[9])<<std::endl;
             // h_cache_hit_ = 0;
             find_iter_++;
             // std::cout<<"find_iter "<<find_iter_<<std::endl;
         }
     }
 
-    void FindTopo(int32_t* input_ids, 
-                    char* partition_index, 
-                    int32_t* partition_offset, 
-                    int32_t batch_size, 
-                    int32_t op_id, 
-                    void* strm_hdl, 
+    void FindTopo(int32_t* input_ids,
+                    char* partition_index,
+                    int32_t* partition_offset,
+                    int32_t batch_size,
+                    int32_t op_id,
+                    void* strm_hdl,
                     int32_t device_id) override {
         edge_index_map_->find(input_ids, input_ids + batch_size, partition_index, static_cast<cudaStream_t>(strm_hdl));
         edge_offset_map_->find(input_ids, input_ids + batch_size, partition_offset, static_cast<cudaStream_t>(strm_hdl));
-        
+
         // if(find_iter_[device_id] % 500 == 0){
         //     cudaMemsetAsync(d_global_count_[device_id], 0, 4, static_cast<cudaStream_t>(strm_hdl));
         //     dim3 block_num(48, 1);
@@ -210,7 +210,7 @@ public:
         //     h_cache_hit_[device_id] += ((h_global_count_[device_id])[0]);
         //     h_batch_size_[device_id] += batch_size;
         //     if(op_id == 4){
-        //         std::cout<<device_id<<" Topo Cache Hit: "<<h_cache_hit_[device_id]<<" "<<(h_cache_hit_[device_id] * 1.0 / h_batch_size_[device_id])<<std::endl;    
+        //         std::cout<<device_id<<" Topo Cache Hit: "<<h_cache_hit_[device_id]<<" "<<(h_cache_hit_[device_id] * 1.0 / h_batch_size_[device_id])<<std::endl;
         //         h_cache_hit_[device_id] = 0;
         //         h_batch_size_[device_id] = 0;
         //     }
@@ -272,7 +272,7 @@ CacheController* NewPreSCCacheController(int32_t train_step, int32_t device_coun
 void UnifiedCache::Initialize(
     int64_t cache_memory,
     int32_t float_feature_len,
-    int32_t train_step, 
+    int32_t train_step,
     int32_t device_count,
     int32_t cpu_cache_capacity,
     int32_t gpu_cache_capacity,
@@ -327,7 +327,7 @@ void UnifiedCache::FindFeat(
         int32_t node_vals[2];
         cudaMemcpy(node_vals, node_counter + (op_id % INTRABATCH_CON) * 2, 8, cudaMemcpyDeviceToHost);
         dyn_cache_accessor[dev_id / Kg_]->retrieve(
-            &sampled_ids[node_vals[0]], node_vals[1], 
+            &sampled_ids[node_vals[0]], node_vals[1],
             (int64_t*)cache_offset, static_cast<cudaStream_t>(stream)
     #ifdef MONITOR_DEEP
             , dev_misses, dev_ctr, inserts
@@ -341,9 +341,9 @@ void UnifiedCache::FindFeat(
 void UnifiedCache::FindTopo(
     int32_t* input_ids,
     char* partition_index,
-    int32_t* partition_offset, 
-    int32_t batch_size, 
-    int32_t op_id, 
+    int32_t* partition_offset,
+    int32_t batch_size,
+    int32_t op_id,
     void* strm_hdl,
     int32_t dev_id)
 {
@@ -359,7 +359,7 @@ void UnifiedCache::CandidateSelection(int cache_agg_mode, FeatureStorage* featur
         node_access_time.push_back(cache_controller_[i]->GetNodeAccessedMap());
         edge_access_time.push_back(cache_controller_[i]->GetEdgeAccessedMap());
     }
-    
+
     dim3 block_num(80, 1);
     dim3 thread_num(1024, 1);
 
@@ -460,7 +460,7 @@ void UnifiedCache::CostModel(int cache_agg_mode, FeatureStorage* feature, GraphS
         int max_payload_size = CLS;//64
 
         int64_t memory_step = cache_memory_ * Kg_ * MIN_INTERVAL;
-        uint64_t total_trans_of_topo = counters[0] + counters[1]; 
+        uint64_t total_trans_of_topo = counters[0] + counters[1];
         uint64_t total_trans_of_feat = 0;
         for(int j = 0; j < Kg_; j++){
             total_trans_of_feat += (int64_t((int64_t(int64_t(cache_controller_[j]->MaxIdNum()) * train_step) * float_feature_len) * sizeof(float)) / max_payload_size);
@@ -482,7 +482,7 @@ void UnifiedCache::CostModel(int cache_agg_mode, FeatureStorage* feature, GraphS
         cudaFree(d_edge_prefix);
         // std::cout<<"total node hotness "<<h_node_prefix[total_num_nodes - 1]<<" "<<h_node_prefix[0]<<" "<<h_node_prefix[1]<<std::endl;
         // std::cout<<"total edge hotness "<<h_edge_prefix[total_num_nodes - 1]<<std::endl;
-           
+
         int64_t current_mem = 0;
         int64_t total_mem = cache_memory_ * Kg_;//10GB
         int64_t steps = (total_mem  - 1) / memory_step + 1;
@@ -502,7 +502,7 @@ void UnifiedCache::CostModel(int cache_agg_mode, FeatureStorage* feature, GraphS
         GetEdgeMem<<<block_num, thread_num>>>(QT_[i], d_edge_mem, total_num_nodes, csr_index);
         cudaCheckError();
         uint64_t* d_edge_mem_prefix;
-        cudaMalloc(&d_edge_mem_prefix, int64_t(int64_t(total_num_nodes)*sizeof(uint64_t))); 
+        cudaMalloc(&d_edge_mem_prefix, int64_t(int64_t(total_num_nodes)*sizeof(uint64_t)));
         thrust::inclusive_scan(thrust::device, d_edge_mem, d_edge_mem + total_num_nodes, d_edge_mem_prefix);
         cudaCheckError();
         uint64_t* h_edge_mem_prefix = (uint64_t*)malloc(int64_t(int64_t(total_num_nodes)*sizeof(uint64_t)));
@@ -548,10 +548,10 @@ void UnifiedCache::CostModel(int cache_agg_mode, FeatureStorage* feature, GraphS
             trans_of_total[sidx] = trans_of_topo[sidx] + trans_of_feat[steps - 1 - sidx];
             // std::cout<<trans_of_total[sidx]<<std::endl;
         }
-        int max_sidx = std::max_element(trans_of_total.begin(),trans_of_total.end()) - trans_of_total.begin(); 
+        int max_sidx = std::max_element(trans_of_total.begin(),trans_of_total.end()) - trans_of_total.begin();
         std::cout<<"Alpha: "<<(max_sidx * MIN_INTERVAL)<<" Transactions: "<<trans_of_total[max_sidx]<<" on Clique: "<<i<<std::endl;
         node_capacity_.push_back(cap_of_feat[steps - 1 - max_sidx] + 1);//capacity of each GPU
-        edge_capacity_.push_back(cap_of_topo[max_sidx] + 1);   
+        edge_capacity_.push_back(cap_of_topo[max_sidx] + 1);
         std::cout<<"Feat capacity: "<<cap_of_feat[steps-1-max_sidx]<<" Topo capacity: "<<cap_of_topo[max_sidx]<<" on Clique: "<<i<<std::endl;
     }
 }
@@ -568,7 +568,7 @@ void UnifiedCache::FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStor
             cache_size[i * Kg_ + j] = free;
         }
     }
-    
+
     for(int32_t i = 0; i < Kc_; i++){
         int cache_expand;
         if(cache_agg_mode == 0){
@@ -608,7 +608,7 @@ void UnifiedCache::FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStor
                     cudaSetDevice(dev_id);
                     float* new_float_feature_cache;
                     cudaMalloc(&new_float_feature_cache, int64_t(int64_t(int64_t(node_capacity_[i]) * float_feature_len_) * sizeof(float)));
-                    
+
                     FeatFillUp<<<128, 1024>>>(node_capacity_[i], float_feature_len_, new_float_feature_cache, cpu_float_feature, QF_[i], Kg_, j);
                     float_feature_cache_[j] = new_float_feature_cache;
                     init_feature_cache<<<1,1>>>(d_float_feature_cache_ptr_[i * Kg_], new_float_feature_cache, j);//j: device id in clique
@@ -625,7 +625,7 @@ void UnifiedCache::FillUp(int cache_agg_mode, FeatureStorage* feature, GraphStor
         dyn_cache_accessor.resize(Kc_);
         for(int32_t i = 0; i < Kc_; i++){
             dyn_cache_accessor[i] = new StaticCache();
-            dyn_cache_accessor[i]->init_cache(node_capacity_[i], float_feature_len_, 
+            dyn_cache_accessor[i]->init_cache(node_capacity_[i], float_feature_len_,
                 cpu_float_feature, QF_[i], Kg_, i * Kg_, feature->TotalNodeNum(), (DYN_FLAGS)dyn_cache, 8);
         }
     }
@@ -711,11 +711,11 @@ void UnifiedCache::CalcCacheStats(int dev_id)
         ull host_inserts;
         cudaMemcpy(&host_inserts, inserts, sizeof(ull), cudaMemcpyDeviceToHost);
         cudaMemset(inserts, 0, sizeof(ull));
-        std::cout << "Miss rate: "<< (float)host_misses * 100 / (float)host_ctr << "% (hits: " 
+        std::cout << "Miss rate: "<< (float)host_misses * 100 / (float)host_ctr << "% (hits: "
                     << host_ctr - host_misses  << ", " << "inserts: " << host_inserts << ", "
                     << "total: " << host_ctr << ")\n";
     } else {
-        std::cout << "Miss rate: "<< (float)host_misses * 100 / (float)host_ctr << "% (hits: " 
+        std::cout << "Miss rate: "<< (float)host_misses * 100 / (float)host_ctr << "% (hits: "
                     << (host_ctr - host_misses) << ", "
                     << "total: " << host_ctr << ")\n";
     }
@@ -724,7 +724,7 @@ void UnifiedCache::CalcCacheStats(int dev_id)
     for(int i = 0; i < node_capacity_[dev_id / Kg_] * Kg_; ++i) {
         hits += opt_hits_tracker[total_num_nodes_ - i - 1];
     }
-    std::cout << "Optimal miss rate: "<< (float)(host_ctr - hits) * 100.0 / (float)host_ctr 
+    std::cout << "Optimal miss rate: "<< (float)(host_ctr - hits) * 100.0 / (float)host_ctr
               << "% (hits: " << hits << ", " << "total: " << host_ctr << ")\n";
     memset(opt_hits_tracker, 0, sizeof(int) * total_num_nodes_);
 }
@@ -743,7 +743,12 @@ void UnifiedCache::AccessCount(
 void UnifiedCache::FeatCacheLookup(int32_t* sampled_ids, int32_t* cache_index,
                                    int32_t* node_counter, float* dst_float_buffer,
                                    int32_t op_id, int32_t dev_id, cudaStream_t strm_hdl){
-    dim3 block_num(32, 1);
+    int major_version = 7;
+    int device = 0;
+    cudaGetDevice(&device);
+    cudaDeviceGetAttribute (&major_version, cudaDevAttrComputeCapabilityMajor, device);
+    int blocks = major_version == 8 ? 64 : 32;
+    dim3 block_num(blocks, 1);
     dim3 thread_num(512, 1);
 #ifdef MONITOR_CACHE
         // 0: Output offset
@@ -758,7 +763,7 @@ void UnifiedCache::FeatCacheLookup(int32_t* sampled_ids, int32_t* cache_index,
         int32_t gpu_cache_capacity    = GPUCapacity();
         // feat_cache_lookup<<<block_num, thread_num, 0, (strm_hdl)>>>(
         //     cpu_float_features_, float_feature_cache_[0], float_feature_len_,
-        //     sampled_ids, cache_index, 
+        //     sampled_ids, cache_index,
         //     cpu_cache_capacity, gpu_cache_capacity,
         //     node_counter, dst_float_buffer,
         //     op_id
@@ -780,7 +785,7 @@ void UnifiedCache::FeatCacheLookup(int32_t* sampled_ids, int32_t* cache_index,
         cudaMemcpyAsync(node_vals2, node_counter + (op_id % INTRABATCH_CON) * 2, 8, cudaMemcpyDeviceToHost, strm_hdl);
         //std::cout << "Batch size: " << node_vals[1] << " offset: " << node_vals[0] << "\n";
         dyn_cache_accessor[dev_id / Kg_]->transfer(
-            &sampled_ids[node_vals2[0]], node_vals2[1], 
+            &sampled_ids[node_vals2[0]], node_vals2[1],
             &dst_float_buffer[node_vals2[0] * float_feature_len_], (int64_t*)cache_index,
             cpu_float_features_, total_num_nodes_, strm_hdl
     #ifdef MONITOR_DEEP
