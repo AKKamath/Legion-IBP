@@ -1,6 +1,6 @@
 #include "static_cache.cuh"
-#include <cooperative_groups.h>
-namespace cg = cooperative_groups;
+//#include <cooperative_groups.h>
+//namespace cg = cooperative_groups;
 // Helper functions for hashing keys
 // TODO AKKAMATH: Add fancy hash algorithms
 __inline__ __device__ int64_t key_to_set_index(int64_t key, int64_t num_sets, int64_t num_gpus)
