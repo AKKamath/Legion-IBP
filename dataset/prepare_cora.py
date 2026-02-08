@@ -1,4 +1,3 @@
-from ogb.nodeproppred import NodePropPredDataset
 import numpy as np
 from scipy.sparse import coo_matrix
 from dgl import data, DGLGraph
