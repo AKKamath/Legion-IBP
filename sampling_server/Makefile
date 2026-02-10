@@ -18,7 +18,7 @@ clean:
 ################################## compiler #######################################
 
 NVCXX := nvcc
-NVCXXFLAGS := -lnvcomp -std=c++17 -gencode=arch=compute_70,code=sm_70 -arch=sm_80 -Xcompiler -Wall \
+NVCXXFLAGS := -std=c++17 -gencode=arch=compute_70,code=sm_70 -arch=sm_80 -Xcompiler -Wall \
 			  --extended-lambda \
 			  -Xcompiler -fPIC -lpthread \
 			  --expt-relaxed-constexpr \
@@ -27,11 +27,7 @@ NVCXXFLAGS := -lnvcomp -std=c++17 -gencode=arch=compute_70,code=sm_70 -arch=sm_8
 			  -I $(SRC_DIR)/engine \
 			  -I $(SRC_DIR)/storage \
 			  -I $(SRC_DIR)/include/hashmap \
-			  -I $(ROOT)/../../ndzip/include \
-			  -I $(SRC_DIR)/IBP/include \
-			  -L $(ROOT)/../../ndzip/build/ \
-			  -lndzip-cuda \
-			  -lndzip \
+			  -I $(ROOT)/../../../include \
 			  -g
 
 

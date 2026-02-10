@@ -36,8 +36,8 @@ edge_src = (csr.indptr).astype(np.int64)
 edge_src.tofile('./products/'+'edge_src')
 edge_dst = (csr.indices).astype(np.int32)
 edge_dst.tofile('./products/'+'edge_dst')
-
+'''
 xtraformat = np.array(edge_index.T.flatten().tolist())
 xtraformat = xtraformat.astype(np.int32)
 xtraformat.tofile('./xtrapulp/products_xtraformat')
-
+'''

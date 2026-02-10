@@ -8,14 +8,14 @@
 #include <thrust/sequence.h>
 #include <thrust/scan.h>
 #include <thrust/execution_policy.h>
-#include "misc/compress_test.cuh"
+//#include "misc/compress_test.cuh"
 #include "misc/ibp_misc_kernels.cuh"
 #include "preproc/ibp_preproc_host.cuh"
 #include "compress/ibp_compress_host.cuh"
 #include "decompress/ibp_decompress_host.cuh"
 
 bool ibp_print_debug = true;
-using namespace nvcomp;
+//using namespace nvcomp;
 
 void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
                               float *cpu_features, int *index_array, int Kg,
@@ -112,7 +112,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
     auto end = TIME_NOW;
     std::cout << "Time taken to allocate data structures:" << (float)TIME_DIFF(start, end) / 1000.0 << " ms\n";
 
-    if(flags & DYN_COMP_TEST) {
+    /*if(flags & DYN_COMP_TEST) {
         nodes_per_gpu = min(total_nodes, (int64_t)100000);
         cudaStream_t stream;
         cudaStreamCreate(&stream);
@@ -378,7 +378,7 @@ void StaticCache::init_cache(int64_t nodes_per_gpu, int32_t feature_len,
         cudaDeviceSynchronize();
         fflush(stdout);
         abort();
-    }
+    }*/
 
     start = TIME_NOW;
     // Initialize variable for tracking operations
