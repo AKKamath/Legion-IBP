@@ -62,9 +62,8 @@ run_expts:
 	$(MAKE) run_products_all
 	$(MAKE) run_pubmed_ls_all
 	$(MAKE) run_citeseer_ls_all
-	#$(MAKE) run_paper100m_all
 	$(MAKE) run_cora_ls_all
-	$(MAKE) run_mag_all
+	#$(MAKE) run_mag_all
 
 run_comptests:
 	$(MAKE) run_reddit_comptest
@@ -80,11 +79,11 @@ run_%_all:
 	$(MAKE) run_$*_dglcomp
 	$(MAKE) run_$*_base
 	$(MAKE) run_$*_comp
-	$(MAKE) run_$*_cputest
-	$(MAKE) run_$*_cpuasync
+	#$(MAKE) run_$*_cputest
 	$(MAKE) run_$*_cpuonly
-	$(MAKE) run_$*_mod
-	$(MAKE) run_$*_opt
+	$(MAKE) run_$*_cpuasync
+	#$(MAKE) run_$*_mod
+	#$(MAKE) run_$*_opt
 	#$(MAKE) run_$*_unopt
 	$(MAKE) extract_$*
 
