@@ -14,6 +14,9 @@ def extract_costs(file_path):
 folder_path = sys.argv[1]
 workloads = sys.argv[2].split()
 types = sys.argv[3].split()
+titles = None
+if len(sys.argv) > 4:
+    titles = sys.argv[4].split()
 
 costs = {}
 avg = {}
@@ -50,6 +53,31 @@ for i in types:
     print()
 print()
 
+print("Speedup", end="\t")
+for workload in workloads:
+    print("{:s}".format(workload), end='\t')
+print()
+for index, i in enumerate(types):
+    if titles:
+        print(titles[index], end='\t')
+    else:
+        print(i, end='\t')
+    for workload in workloads:
+        if i in costs:
+            if workload in costs[i]:
+                if index <= 1:
+                    print("{:.4f}".format(avg[types[0]][workload] / avg[i][workload]), end='\t')
+                else:
+                    print("{:.4f}".format(avg[types[2]][workload] / avg[i][workload]), end='\t')
+                #print("{:.4f}".format(avg[i][workload]), end='\t')
+            else:
+                print("NA", end="\t")
+        else:
+            print("NA", end="\t")
+    print()
+print()
+
+'''
 print("Stddev", end='\t')
 for workload in workloads:
     print("{:s}".format(workload), end='\t')
@@ -65,3 +93,4 @@ for i in types:
         else:
             print("NA", end="\t")
     print()
+'''

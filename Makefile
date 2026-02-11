@@ -46,13 +46,15 @@ sampling: init clean
 		--dyn_cache ${DYN_CACHE} ${OTHER_OPTS} > ${RESULTS}/${DATASET}/sampling${POSTFIX}.log
 
 extract_%:
-	python scripts/extract_results.py ${RESULTS} $* "unopt dgl compdgl base mod comp cputest opt" > ${RESULTS}/$*.log
+	python scripts/extract_results.py ${RESULTS} $* "dgl dglcomp base comp cpuonly cpuasync" > ${RESULTS}/$*.log
 
 extract_expts:
-	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt dgl dglcomp base mod comp cpuonly cpuonlyasync cputest cpuasync opt"
+	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag" "dgl dglcomp base comp cpuonly cpuasync"
 
 extract_expts_single:
-	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag paper100m" "unopt_singlegpu dgl_singlegpu dglcomp_singlegpu base_singlegpu mod_singlegpu comp_singlegpu cpuonly_singlegpu cputest_singlegpu cpuasync_singlegpu opt_singlegpu"
+	python scripts/extract_results.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag" \
+		"dgl_singlegpu dglcomp_singlegpu base_singlegpu comp_singlegpu cpuonly_singlegpu cpuasync_singlegpu" \
+		"DGL DGL+IBP(M) Legion Legion+IBP(C) Legion+IBP(M) Legion+IBP(C/M)"
 
 extract_comptest:
 	python scripts/extract_compression.py ${RESULTS} "pubmed citeseer cora reddit products mag paper100m"
@@ -63,7 +65,7 @@ run_expts:
 	$(MAKE) run_pubmed_ls_all
 	$(MAKE) run_citeseer_ls_all
 	$(MAKE) run_cora_ls_all
-	#$(MAKE) run_mag_all
+	$(MAKE) run_mag_all
 
 run_comptests:
 	$(MAKE) run_reddit_comptest
@@ -95,7 +97,6 @@ run_cpuasync_singlegpu:
 	$(MAKE) run_citeseer_ls_cpuasync_singlegpu
 	$(MAKE) run_paper100m_cpuasync_singlegpu
 	$(MAKE) run_mag_cpuasync_singlegpu
-
 
 # Command to run with dynamic cache
 %_dyn:
