@@ -20,3 +20,4 @@ dataset/citeseer
 meta_config
 **.out
 **.err
+**/__pycache__
