@@ -82,11 +82,15 @@ def backward(scaler, loss, optimizer):
     scaler.update()
 
 total_train_time = 0
+total_wait_time = 0
 train_batches = 0
 def train_one_step(model, optimizer, loss_fcn, device, feat_len, iter, device_id, fp16):
-    
+    global total_wait_time
+    start = time.perf_counter_ns()
     ids, features, labels, block1_agg_src, block1_agg_dst, block2_agg_src, block2_agg_dst = ipc_service.get_next(feat_len)
     block1_src_num, block1_dst_num, block2_src_num, block2_dst_num = ipc_service.get_block_size()
+    end = time.perf_counter_ns()
+    total_wait_time += end - start
 
     data_type = torch.float32
     # Typecast fp32 to fp16
@@ -110,9 +114,9 @@ def train_one_step(model, optimizer, loss_fcn, device, feat_len, iter, device_id
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-    
+
     torch.cuda.synchronize()
-    end = time.perf_counter_ns()    
+    end = time.perf_counter_ns()
     #print("Timestamp {:d}, sample {:d}, worker {:d}, system {:s}, {:s}".format(time.time_ns(), iter, device_id, "trainer", "finishtrain"))
     global total_train_time
     global train_batches
@@ -122,7 +126,7 @@ def train_one_step(model, optimizer, loss_fcn, device, feat_len, iter, device_id
     return 0
 
 def valid_one_step(model, metric, device, feat_len, fp16):
-    
+
     ids, features, labels, block1_agg_src, block1_agg_dst, block2_agg_src, block2_agg_dst = ipc_service.get_next(feat_len)
     block1_src_num, block1_dst_num, block2_src_num, block2_dst_num = ipc_service.get_block_size()
 
@@ -149,7 +153,7 @@ def valid_one_step(model, metric, device, feat_len, fp16):
     return acc
 
 def test_one_step(model, metric, device, feat_len, fp16):
-    
+
     ids, features, labels, block1_agg_src, block1_agg_dst, block2_agg_src, block2_agg_dst = ipc_service.get_next(feat_len)
     block1_src_num, block1_dst_num, block2_src_num, block2_dst_num = ipc_service.get_block_size()
     data_type = torch.float32
@@ -206,8 +210,10 @@ def worker_process(rank, world_size, args):
         epoch_time = 0
         global total_train_time
         global train_batches
+        global total_wait_time
         total_train_time = 0
         train_batches = 0
+        total_wait_time = 0
         for iter in range(train_steps):
             train_loss = train_one_step(model, optimizer, loss_fcn, cuda_device, feat_len, iter, device_id, args.float16)
             #if iter % 100 == 0 and iter != 0:
@@ -215,9 +221,10 @@ def worker_process(rank, world_size, args):
             # if device_id == 0:
             #     print('Iter {} Train Loss :{} '.format(iter, train_loss))
 
-        print('Iter {} Batches: {}, avg train time : {} us'.format(iter, train_batches, total_train_time / train_batches / 1000))
+        print('Epoch {} Batches: {}, train time : {} us, wait time : {} us'.format(
+            epoch, train_batches, total_train_time / 1000, total_wait_time / 1000))
         epoch_time += time.time() - start
-        
+
         model.eval()
         metric = torchmetrics.Accuracy('multiclass', num_classes = args.class_num)
         metric = metric.to(device_id)
@@ -225,6 +232,7 @@ def worker_process(rank, world_size, args):
         with torch.no_grad():
             total_train_time = 0
             train_batches = 0
+            total_wait_time = 0
             for iter in range(valid_steps):
                 valid_one_step(model, metric, cuda_device, feat_len, args.float16)
                 #if iter % 100 == 0 and iter != 0:
@@ -238,7 +246,6 @@ def worker_process(rank, world_size, args):
         if device_id == 0:
             print("Epoch:{}, Cost:{} s, Val Acc: {}".format(epoch, epoch_time, acc_val))
 
-    
     model.eval()
     metric = torchmetrics.Accuracy('multiclass', num_classes = args.class_num)
     metric = metric.to(device_id)

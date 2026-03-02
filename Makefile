@@ -59,6 +59,12 @@ extract_expts_single:
 extract_comptest:
 	python scripts/extract_compression.py ${RESULTS} "pubmed citeseer cora reddit products mag paper100m"
 
+extract_breakdown:
+	python scripts/extract_breakdown.py ${RESULTS} "cora_ls pubmed_ls citeseer_ls reddit products mag" "base_singlegpu cpuasync_singlegpu" "Legion Legion+IBP(C/M)"
+
+extract_cache_cap:
+	python scripts/extract_cache_cap.py ${RESULTS} "pubmed_ls citeseer_ls cora_ls reddit products mag" "cpuasync_singlegpu"
+
 run_expts:
 	$(MAKE) run_reddit_all
 	$(MAKE) run_products_all
